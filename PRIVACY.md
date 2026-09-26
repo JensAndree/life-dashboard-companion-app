@@ -40,9 +40,10 @@ Uninstalling the app removes all of this. The settings export feature writes an 
 | Health Connect write permissions (per type you enable) | Writing the measurements your Home Assistant sends: weight, height, body fat, lean body mass, bone mass, body water mass, blood pressure. Asked for one type at a time, when you switch that type on under Receive |
 | Usage access (`PACKAGE_USAGE_STATS`) | Screen time per app |
 | Notifications | Telling you when syncs keep failing (opt-in) |
+| Camera | Scanning the pairing code that Home Assistant shows. Asked for only when you open the scanner, and the camera runs only while that screen is open. Frames are decoded on the device and are never stored or sent. Pairing works without it, by entering the address and secret by hand |
 | Internet | Sending data to your webhook or broker |
 
-The app does not request access to contacts, location, the camera, the microphone or your files, and it does not use `QUERY_ALL_PACKAGES`.
+The app does not request access to contacts, location, the microphone or your files, and it does not use `QUERY_ALL_PACKAGES`. The camera is used only by the pairing scanner, as described above.
 
 ## Your control
 
