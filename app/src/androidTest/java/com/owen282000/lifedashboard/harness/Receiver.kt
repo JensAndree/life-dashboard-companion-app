@@ -4,6 +4,7 @@ import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
+import mockwebserver3.SocketEffect
 import org.junit.rules.ExternalResource
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
@@ -44,6 +45,17 @@ class Receiver : ExternalResource() {
     fun respond(path: String, vararg codes: Int) {
         val queue = java.util.concurrent.atomic.AtomicInteger()
         route(path) { MockResponse(code = codes[minOf(queue.getAndIncrement(), codes.size - 1)]) }
+    }
+
+    /**
+     * Takes requests on [path] and never answers them: the headers are read, the response
+     * never starts, so the app waits until its own read timeout.
+     */
+    fun stall(path: String) = route(path) { MockResponse.Builder().onResponseStart(SocketEffect.Stall).build() }
+
+    /** Waits until at least [count] requests have arrived. */
+    fun awaitRequests(count: Int, timeoutMs: Long = 20_000) {
+        Await.until("$count request(s) at the receiver", timeoutMs) { log.size >= count }
     }
 
     fun to(path: String): List<Exchange> = exchanges.filter { it.path == path }

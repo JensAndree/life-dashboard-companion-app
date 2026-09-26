@@ -33,8 +33,25 @@ object TestSetup {
         }
     }
 
+    const val SCREEN_PATH = "/api/webhook/ci-screen"
+    const val SCREEN_SECRET = "ci-secret-screen"
+    val SCREEN_HEADERS = mapOf("X-Api-Key" to "ci-key-screen", "Cookie" to "session=ci")
+
+    /** One Screen Time webhook on the [Receiver], with a secret and headers of its own. */
+    fun screenTime(receiver: Receiver) {
+        val prefs = context.appPreferences()
+        prefs.setScreenTimeWebhookUrls(listOf(receiver.url(SCREEN_PATH)))
+        prefs.setScreenTimeWebhookSecret(SCREEN_SECRET)
+        prefs.setScreenTimeWebhookHeaders(SCREEN_HEADERS)
+        prefs.setAllowHttpWebhooks(true)
+    }
+
     /** The sync as the app runs it, on a Health Connect client that counts its calls. */
     fun syncManager(): HealthSyncManager = HealthSyncManager(context, Managers.counting(context))
+
+    /** The failure streak SyncFailureNotifier keeps for HEALTH_CONNECT, SCREEN_TIME or RECEIVE. */
+    fun streak(name: String): Int =
+        context.getSharedPreferences("life_dashboard_prefs", android.content.Context.MODE_PRIVATE).getInt("sync_failure_streak_$name", 0)
 
     fun versionName(): String = context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
 }
