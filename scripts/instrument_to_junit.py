@@ -37,21 +37,19 @@ def parse(lines):
     return tests, result_lines
 
 
-def run_time(result_lines):
-    """The runner's own 'Time: 12.3' from the final stream, or None."""
-    for line in result_lines:
-        for part in line.split("\n"):
-            if part.startswith("Time: "):
-                return part[len("Time: "):].strip()
-    return None
+def run_time(lines):
+    """The runner's own 'Time: 12.3', the last one in the output, or None."""
+    found = None
+    for line in lines:
+        if line.startswith("Time: "):
+            found = line[len("Time: "):].strip()
+    return found
 
 
 def main(src, dst, summary=None):
     with open(src, encoding="utf-8", errors="replace") as handle:
         lines = handle.read().split("\n")
     tests, result = parse(lines)
-    # The final stream (with "Time:") spans several lines after INSTRUMENTATION_RESULT.
-    tail = "\n".join(lines[-40:])
     crashed = any("shortMsg=" in l for l in result) or not any(l.startswith("INSTRUMENTATION_CODE: ") for l in result)
     suite = ET.Element("testsuite", name="instrumented", tests=str(len(tests)))
     failures = errors = skipped = 0
@@ -81,7 +79,7 @@ def main(src, dst, summary=None):
     suite.set("skipped", str(skipped))
     ET.ElementTree(suite).write(dst, encoding="utf-8", xml_declaration=True)
 
-    time = run_time([tail]) or "?"
+    time = run_time(lines) or "?"
     headline = f"{len(tests)} tests, {failures} failures, {errors} errors, {skipped} skipped, {time} s in the runner"
     print(headline)
     ok = not (failures or errors or not tests)
