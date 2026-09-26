@@ -5,6 +5,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Device
@@ -57,6 +58,19 @@ class HcFixture(private val context: Context) {
         samples.map { (time, bpm) -> HeartRateRecord.Sample(time, bpm) },
         meta()
     )
+
+    /** A night from [start] to [end] with the given stages, each as (start, end, stage type). */
+    fun sleep(start: Instant, end: Instant, stages: List<Triple<Instant, Instant, Int>>): SleepSessionRecord = SleepSessionRecord(
+        startTime = start, startZoneOffset = offset(start), endTime = end, endZoneOffset = offset(end),
+        metadata = meta(), title = "LdSuite night",
+        stages = stages.map { (from, to, stage) -> SleepSessionRecord.Stage(from, to, stage) }
+    )
+
+    /** Inserts [records] in batches of [batchSize], each with a modification time of its own. */
+    fun insertInBatches(records: List<Record>, batchSize: Int): List<String> = records.chunked(batchSize).flatMap {
+        Thread.sleep(15)
+        insert(*it.toTypedArray())
+    }
 
     /** Reads every record of [type] in the lookback window the sync uses. */
     fun <T : Record> read(type: KClass<T>, from: Instant = Instant.now().minus(Duration.ofDays(8))): List<T> = runBlocking {
