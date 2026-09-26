@@ -6,6 +6,7 @@ Home Assistant / MQTT:
 - Point the app at your MQTT broker and every synced data type appears in Home Assistant automatically via MQTT Discovery, grouped under one device, with no server-side configuration
 - States and discovery configs are published retained, so values survive Home Assistant restarts
 - Optional TLS and username/password authentication; credentials are stored encrypted on-device
+- Receive: a scale or blood pressure monitor paired with Home Assistant can write its measurements into Health Connect through the Life Dashboard integration (weight, height, body composition, blood pressure), per type and only when you switch it on
 
 Health Connect:
 - 33 data types: steps, sleep with stages, heart rate, HRV, blood pressure, blood glucose, VO2 max, skin temperature, full cycle tracking, and more

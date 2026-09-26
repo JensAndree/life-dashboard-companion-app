@@ -32,6 +32,14 @@ All notable changes to this project are documented in this file. The format is b
 - The release manifest declares write permissions for the seven Receive types. They are
   requested one at a time, when a type is switched on under Receive.
 
+### Fixed
+
+- The dashboard card on the Health tab showed the result of Sync Now only after switching
+  tabs; it now refreshes as soon as the sync is done, as the Screen Time card already did.
+- The privacy policy said the app does not use the camera. The pairing scanner of 1.16.0
+  does, and the policy now says what for: only while the scanner is open, with every frame
+  decoded on the device and never stored or sent.
+
 ## [1.19.0] - 2026-09-26
 
 ### Added
