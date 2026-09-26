@@ -13,12 +13,44 @@ object WebhookSupport {
      * verify by recomputing the HMAC over the raw request body with the shared secret and
      * comparing it (constant-time) against this header.
      */
-    fun signature(payload: String, secret: String): String {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
-        val digest = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
-        return "sha256=" + digest.joinToString("") { "%02x".format(it) }
+    fun signature(payload: String, secret: String): String =
+        "sha256=" + hex(hmac(secret.toByteArray(Charsets.UTF_8), payload.toByteArray(Charsets.UTF_8)))
+
+    /**
+     * The label the response key is derived under (write-back protocol v1, issue #62). The
+     * integration signs its response with HMAC-SHA256 under a key that is itself
+     * HMAC-SHA256(secret, this label), never under the secret directly, so a request the app
+     * signed can never be played back to it as a response: the two directions use different
+     * keys, and only one of them is ever seen on the wire in each direction.
+     */
+    const val RESPONSE_KEY_LABEL = "life-dashboard-response-v1"
+
+    /** The 32 raw bytes the response direction is keyed with. */
+    fun responseKey(secret: String): ByteArray =
+        hmac(secret.toByteArray(Charsets.UTF_8), RESPONSE_KEY_LABEL.toByteArray(Charsets.UTF_8))
+
+    /** What the X-Signature header on a response must equal, computed over the raw body bytes. */
+    fun responseSignature(body: ByteArray, secret: String): String = "sha256=" + hex(hmac(responseKey(secret), body))
+
+    /**
+     * Constant-time comparison of two signature strings, so a byte-by-byte mismatch cannot be
+     * timed. A missing header never matches anything.
+     */
+    fun signaturesMatch(presented: String?, expected: String): Boolean {
+        if (presented == null) return false
+        return java.security.MessageDigest.isEqual(
+            presented.toByteArray(Charsets.UTF_8),
+            expected.toByteArray(Charsets.UTF_8)
+        )
     }
+
+    private fun hmac(key: ByteArray, message: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(key, "HmacSHA256"))
+        return mac.doFinal(message)
+    }
+
+    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     /**
      * Whether a failed delivery attempt is worth retrying. Network-level failures (no HTTP
