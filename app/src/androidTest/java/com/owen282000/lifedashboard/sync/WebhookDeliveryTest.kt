@@ -1,5 +1,6 @@
 package com.owen282000.lifedashboard.sync
 
+import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
@@ -7,6 +8,7 @@ import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.owen282000.lifedashboard.HealthDataType
 import com.owen282000.lifedashboard.HealthDataType.HEART_RATE
 import com.owen282000.lifedashboard.HealthDataType.SLEEP
 import com.owen282000.lifedashboard.HealthDataType.STEPS
@@ -333,5 +335,25 @@ class WebhookDeliveryTest {
         Conservation.assertExactlyOnce(seeded, posts)
         val sizes = posts.map { Conservation.records(it).size }
         assertTrue("every POST within the cap of 1000 samples: $sizes", sizes.all { it <= 1000 })
+    }
+
+    /**
+     * T5 of report 04, at the level where it went wrong: with every data type switched on, the
+     * payload's diagnostics say permission_granted for all of them, checked against Health
+     * Connect's own list rather than against a string the app built (six months of HRV were
+     * lost to a permission name that did not match).
+     */
+    @Test
+    fun everyTypeReportsItsPermissionGranted() = runBlocking {
+        TestSetup.health(receiver, HealthDataType.entries.toSet())
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+
+        TestSetup.syncManager().performSync().getOrThrow()
+
+        val granted = fixture.client.permissionController.getGrantedPermissions()
+        HealthDataType.entries.forEach { assertTrue("read $it granted", HealthPermission.getReadPermission(it.recordClass) in granted) }
+        val diagnostics = Conservation.parse(receiver.exchanges.single().text).obj("_diagnostics")!!
+        assertEquals(HealthDataType.entries.size, diagnostics.size)
+        diagnostics.forEach { (type, diag) -> assertEquals("$type permission_granted", "true", (diag as JsonObject).num("permission_granted")) }
     }
 }
