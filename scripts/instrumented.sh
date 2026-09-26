@@ -7,6 +7,12 @@
 #   scripts/instrumented.sh --class com.owen282000.lifedashboard.sync.OutboxTest
 #   scripts/instrumented.sh --no-build       # reuse the APKs already built
 #   scripts/instrumented.sh --ci             # CI: no questions, no build, no AVD management
+#   scripts/instrumented.sh --small          # leave out the @LargeTest tests (budgets, hangs)
+#   scripts/instrumented.sh --no-smoke       # skip the background smoke run at the end
+#   scripts/instrumented.sh --smoke-only     # only the background smoke run
+#
+# After the suite a background smoke run checks the real background route with a receiver on
+# the host (scripts/webhook-receiver.py) and `cmd jobscheduler run -f`; see smoke() below.
 #
 # The suite overwrites the app's settings and deletes the app's own Health Connect records, so
 # it refuses any device that is not the AVD `ldc-instrumented` (a real phone, another emulator
@@ -36,14 +42,20 @@ CI_MODE=0
 FORCE=0
 BUILD=1
 CLASS=""
+SMOKE=1
+SIZE=""
+SMOKE_ONLY=0
 
-usage() { sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 2 && /^#/ { sub(/^# ?/, ""); print; next } NR > 2 { exit }' "$0"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --ci) CI_MODE=1; BUILD=0 ;;
         --force) FORCE=1 ;;
         --no-build) BUILD=0 ;;
+        --no-smoke) SMOKE=0 ;;
+        --small) SIZE="small" ;;
+        --smoke-only) SMOKE_ONLY=1 ;;
         --class) CLASS="${2:?--class needs a class name}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -245,21 +257,110 @@ adb shell appops set "$APP_ID" android:get_usage_stats allow
 adb shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS
 
 # --- Run ----------------------------------------------------------------------------------------
-say "Running${CLASS:+ $CLASS}"
-adb logcat -c
-adb shell rm -rf "/sdcard/Android/data/$APP_ID/files/instrumented"
-set -- -w -r --no-hidden-api-checks -e timeout_msec 120000
-[ -n "$CLASS" ] && set -- "$@" -e class "$CLASS"
-adb shell am instrument "$@" "$RUNNER" | tee "$OUT/raw.txt" | grep -E '^(INSTRUMENTATION_STATUS: test=|INSTRUMENTATION_STATUS_CODE: -|FAILURES|OK \(|Time: )' || true
-
-adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
-adb pull "/sdcard/Android/data/$APP_ID/files/instrumented" "$OUT/witness" >/dev/null 2>&1 || true
-
 summary="$OUT/summary.md"
 status=0
-python3 scripts/instrument_to_junit.py "$OUT/raw.txt" "$OUT/junit.xml" --summary "$summary" || status=$?
-if [ $status -ne 0 ]; then
-    adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 && adb pull /sdcard/window.xml "$OUT/window.xml" >/dev/null 2>&1 || true
+if [ $SMOKE_ONLY -eq 0 ]; then
+    say "Running${CLASS:+ $CLASS}${SIZE:+ ($SIZE tests)}"
+    adb logcat -c
+    adb shell rm -rf "/sdcard/Android/data/$APP_ID/files/instrumented"
+    set -- -w -r --no-hidden-api-checks -e timeout_msec 180000
+    if [ -n "$CLASS" ]; then
+        set -- "$@" -e class "$CLASS"
+    else
+        # The preparation of the background run below is not a test of its own.
+        set -- "$@" -e notPackage "$APP_ID.smoke"
+    fi
+    [ "$SIZE" = "small" ] && set -- "$@" -e notAnnotation androidx.test.filters.LargeTest
+    suite_started=$(date +%s)
+    adb shell am instrument "$@" "$RUNNER" | tee "$OUT/raw.txt" | grep -E '^(INSTRUMENTATION_STATUS: test=|INSTRUMENTATION_STATUS_CODE: -|FAILURES|OK \(|Time: )' || true
+    suite_took=$(( $(date +%s) - suite_started ))
+
+    adb logcat -d > "$OUT/logcat.txt" 2>/dev/null || true
+    adb pull "/sdcard/Android/data/$APP_ID/files/instrumented" "$OUT/witness" >/dev/null 2>&1 || true
+
+    python3 scripts/instrument_to_junit.py "$OUT/raw.txt" "$OUT/junit.xml" --summary "$summary" || status=$?
+    if [ $status -ne 0 ]; then
+        adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 && adb pull /sdcard/window.xml "$OUT/window.xml" >/dev/null 2>&1 || true
+    fi
+    echo "The suite took ${suite_took} s on the device." | tee -a "$summary"
+fi
+
+# --- Background smoke run -----------------------------------------------------------------------
+# The one check of the real background route, outside JUnit: under instrumentation the app
+# counts as foreground, so no test above ever meets READ_HEALTH_DATA_IN_BACKGROUND. The fixture
+# app seeds foreign records, BackgroundSmokeSetup points the app at a receiver on the host, the
+# app's process is started without an activity so the real WorkManager plans the run, and
+# JobScheduler is told to run that job now. The receiver must get the fixture's records.
+smoke() {
+    local port=18765 secret out job line i
+    secret="smoke-$(date +%s)"
+    out="$OUT/smoke.jsonl"
+    rm -f "$out"
+    python3 scripts/webhook-receiver.py --port "$port" --secret "$secret" --out "$out" > "$OUT/smoke-receiver.log" 2>&1 &
+    smoke_receiver=$!
+    adb reverse "tcp:$port" "tcp:$port" >/dev/null
+    adb shell am instrument -w --no-hidden-api-checks -e class "$APP_ID.fixture.SeedForSuite" \
+        "$APP_ID.fixture.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/smoke-seed.txt"
+    grep -q 'OK (1 test)' "$OUT/smoke-seed.txt" || { echo "the fixture did not seed; see smoke-seed.txt"; return 1; }
+    adb shell am instrument -w -r --no-hidden-api-checks -e class "$APP_ID.smoke.BackgroundSmokeSetup" \
+        -e smokeUrl "http://127.0.0.1:$port/health" -e smokeSecret "$secret" "$RUNNER" > "$OUT/smoke-setup.txt"
+    grep -q 'OK (1 test)' "$OUT/smoke-setup.txt" || { echo "the setup failed; see smoke-setup.txt"; return 1; }
+    # A broadcast to WorkManager's own diagnostics receiver (shell holds the DUMP permission it
+    # asks for) starts the process without an activity and without a sync: the application
+    # plans its timed run in the real WorkManager, and the process falls back to the background.
+    adb shell am broadcast -a androidx.work.diagnostics.REQUEST_DIAGNOSTICS -n "$APP_ID/androidx.work.impl.diagnostics.DiagnosticsReceiver" >/dev/null
+    # The diagnostics worker's own job comes and goes within a second; what stays is the run.
+    sleep 5
+    job=""
+    for i in $(seq 1 30); do
+        line=$(adb shell dumpsys jobscheduler | grep -E "^ +JOB #u[0-9a-z]+/[0-9]+: [0-9a-f]+ $APP_ID/androidx\.work" | head -1 || true)
+        job=$(printf '%s' "$line" | sed -E 's#^ *JOB \#u[0-9a-z]+/([0-9]+):.*#\1#')
+        [ -n "$job" ] && break
+        sleep 1
+    done
+    [ -n "$job" ] || { echo "no WorkManager job of the app in JobScheduler"; return 1; }
+    uid=$(adb shell pm list packages -U "$APP_ID" | tr -d '\r' | sed -n "s/^package:$APP_ID uid:\([0-9]*\)$/\1/p")
+    echo "running job $job with the app's uid in state $(adb shell cmd activity get-uid-state "$uid" | tr -d '\r')"
+    adb shell cmd jobscheduler run -f "$APP_ID" "$job" > "$OUT/smoke-run.txt" 2>&1
+    for i in $(seq 1 90); do
+        [ -s "$out" ] && break
+        sleep 1
+    done
+    python3 - "$out" "$APP_ID.fixture" <<'PY'
+import json, sys
+path, fixture = sys.argv[1], sys.argv[2]
+try:
+    posts = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+except FileNotFoundError:
+    posts = []
+records = []
+for post in posts:
+    body = post["body"] if isinstance(post["body"], dict) else {}
+    for key in ("steps", "weight"):
+        records += [r for r in body.get(key, []) if isinstance(r, dict)]
+foreign = [r for r in records if r.get("source") == fixture]
+signed = all(p.get("signature_ok") for p in posts)
+print(f"background run: {len(posts)} POST(s), {len(foreign)} record(s) of the fixture, signatures {'valid' if signed else 'INVALID'}")
+sys.exit(0 if posts and signed and len(foreign) == 4 else 1)
+PY
+}
+smoke_status=0
+smoke_receiver=""
+if [ -z "$CLASS" ] && [ $SMOKE -eq 1 ]; then
+    say "Background smoke run"
+    smoke_started=$(date +%s)
+    # Not through a pipe: smoke() sets the receiver's pid for the kill below.
+    smoke > "$OUT/smoke.txt" 2>&1 || smoke_status=1
+    cat "$OUT/smoke.txt"
+    grep -q '^background run: .*signatures valid' "$OUT/smoke.txt" || smoke_status=1
+    [ -n "$smoke_receiver" ] && kill "$smoke_receiver" 2>/dev/null
+    adb reverse --remove tcp:18765 >/dev/null 2>&1 || true
+    adb shell am instrument -w --no-hidden-api-checks -e class "$APP_ID.fixture.ClearFixtureData" \
+        "$APP_ID.fixture.test/androidx.test.runner.AndroidJUnitRunner" > "$OUT/smoke-clear.txt" 2>&1 || true
+    grep -q 'OK (1 test)' "$OUT/smoke-clear.txt" || { echo "the fixture could not clear its records"; smoke_status=1; }
+    result="passed"; [ $smoke_status -eq 0 ] || result="FAILED"
+    echo "Background smoke run: $result in $(( $(date +%s) - smoke_started )) s ($(tail -1 "$OUT/smoke.txt"))" | tee -a "$summary"
+    [ $smoke_status -eq 0 ] || status=1
 fi
 elapsed=$(( $(date +%s) - started_at ))
 printf '\nScript took %d s. Reports in %s/\n' "$elapsed" "$OUT"
