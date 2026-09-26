@@ -3,6 +3,9 @@ package com.owen282000.lifedashboard.harness
 import androidx.test.platform.app.InstrumentationRegistry
 import com.owen282000.lifedashboard.HealthDataType
 import com.owen282000.lifedashboard.HealthSyncManager
+import com.owen282000.lifedashboard.MqttBroker
+import com.owen282000.lifedashboard.MqttSection
+import com.owen282000.lifedashboard.MqttSectionSettings
 import com.owen282000.lifedashboard.WriteBackType
 import com.owen282000.lifedashboard.appPreferences
 
@@ -44,6 +47,17 @@ object TestSetup {
         prefs.setScreenTimeWebhookSecret(SCREEN_SECRET)
         prefs.setScreenTimeWebhookHeaders(SCREEN_HEADERS)
         prefs.setAllowHttpWebhooks(true)
+    }
+
+    /**
+     * MQTT on for [section] through the shared broker (the suite's own, see MqttProbe), under
+     * a base topic of its own per test so retained values of earlier tests never mix in.
+     */
+    fun mqtt(section: MqttSection, baseTopic: String = "ldt_" + java.util.UUID.randomUUID().toString().take(6), port: Int = MqttProbe.PORT): String {
+        val prefs = context.appPreferences()
+        prefs.setSharedMqttBroker(MqttBroker(host = MqttProbe.HOST, port = port, useTls = false, username = null, password = null))
+        prefs.setMqttSection(section, MqttSectionSettings(enabled = true, useSharedBroker = true, ownBroker = prefs.getMqttSection(section).ownBroker, baseTopic = baseTopic))
+        return baseTopic
     }
 
     /** The sync as the app runs it, on a Health Connect client that counts its calls. */
