@@ -45,6 +45,13 @@ jobs:
           # Compose UI. This is the equivalent guard; it keeps new screens translatable.
           chmod +x scripts/check-hardcoded-strings.sh
           ./scripts/check-hardcoded-strings.sh
+      - name: Check for swallowed cancellations
+        run: |
+          # A catch-all in suspend code that does not rethrow CancellationException turns a
+          # stopped worker into a wrong result (1.18.0). Known cases are allowlisted and may
+          # only shrink.
+          chmod +x scripts/check-cancellation.sh
+          ./scripts/check-cancellation.sh
       - name: Run ktlint
         run: ./gradlew ktlintCheck
       - name: Run unit tests
