@@ -68,6 +68,21 @@ class WriteBackPayloadTest {
     }
 
     @Test
+    fun `the response key and signature match the integration's test vector`() {
+        // The same vector the Life Dashboard integration asserts in its own tests, so both
+        // sides derive the response key the same way: secret "key", the fox sentence as body.
+        val body = "The quick brown fox jumps over the lazy dog".toByteArray(Charsets.UTF_8)
+        assertEquals(
+            "231a58ff1a4b95092f9b57457cebbb954207bafa208a00982abe19b95a0303c8",
+            WebhookSupport.responseKey("key").joinToString("") { "%02x".format(it) }
+        )
+        assertEquals(
+            "sha256=1f5e6e7bf7761bb81dcbbb34f09b6ba176523cdeba9e80d9a28dce3f34791e9b",
+            WebhookSupport.responseSignature(body, "key")
+        )
+    }
+
+    @Test
     fun `a well signed response bound to this request is accepted`() {
         val accepted = signed(response()) as WriteBackResponse.Accepted
         assertEquals("0.7.0", accepted.integrationVersion)

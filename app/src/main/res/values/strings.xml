@@ -22,7 +22,7 @@
     <!-- Shared webhook / sync settings, used by Health Connect and Screen Time -->
     <string name="webhook_add_a_url">Add a webhook URL</string>
     <string name="webhook_allow_plain_http">Allow plain HTTP webhooks</string>
-    <string name="webhook_allow_plain_http_description">For a webhook on your own LAN or VPN that has no certificate. HTTPS stays the default, and this one switch covers both Health Connect and Screen Time. MQTT is unaffected.</string>
+    <string name="webhook_allow_plain_http_description">For a webhook on your own LAN or VPN that has no certificate. HTTPS stays the default, and this one switch covers both Health Connect and Screen Time, including the measurements Home Assistant sends to this phone. MQTT is unaffected.</string>
     <string name="client_cert_title">Client certificate (mTLS)</string>
     <string name="client_cert_none">None</string>
     <string name="client_cert_description">For a server that requires a client certificate. Install it first in Android settings (Security, Encryption &amp; credentials, Install a certificate). Chosen once and used for every webhook, also in the background. MQTT is unaffected.</string>
