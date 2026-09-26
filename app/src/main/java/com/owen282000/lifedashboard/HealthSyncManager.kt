@@ -119,7 +119,7 @@ class HealthSyncManager(private val context: Context) {
             }
             // Whether a request with the writeback block reached the source URL this sync.
             // When none did, whatever the reason (nothing read, everything absorbed into open
-            // buckets, only MQTT), the heartbeat at the end makes the round trip instead.
+            // buckets, no read types at all), the heartbeat at the end makes the round trip.
             var postedToSource = false
 
             // Dense types (heart rate) can hold a backlog many times the per-sync cap. A single
@@ -335,7 +335,7 @@ class HealthSyncManager(private val context: Context) {
             // No request with the writeback block went out this sync, yet Receive is on: the
             // heartbeat (protocol section 3.2) makes the round trip that carries the acks and
             // fetches what is waiting. That covers a sync with nothing to send, one whose
-            // records all went into open buckets, and an MQTT-only setup. It is never queued
+            // records all went into open buckets, and one with no read types. It is never queued
             // in the outbox, because there is nothing in it worth keeping; its outcome feeds
             // the webhook streak like a deletion-only payload does, so an unreachable Home
             // Assistant is one outage with one notification, not two.

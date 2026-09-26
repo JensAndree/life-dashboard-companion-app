@@ -180,6 +180,19 @@ class WriteBackPayloadTest {
     }
 
     @Test
+    fun `a follow-up request is made only after a round that succeeded with more waiting`() {
+        assertTrue(WriteBackPayload.followUpAfter(more = true, roundFailed = false))
+        assertFalse("nothing more waiting", WriteBackPayload.followUpAfter(more = false, roundFailed = false))
+        // A round that failed with a retryable code leaves the same readings pending; asking
+        // again in the same sync would only repeat the failure.
+        for (failure in listOf(WriteBackFailure.HC_UNAVAILABLE, WriteBackFailure.RATE_LIMITED)) {
+            assertTrue(failure.retryable)
+            assertFalse("no follow-up after ${failure.code}", WriteBackPayload.followUpAfter(more = true, roundFailed = true))
+        }
+        assertFalse(WriteBackPayload.followUpAfter(more = false, roundFailed = true))
+    }
+
+    @Test
     fun `write-back is active only with the switch, a source URL still in the section and a secret`() {
         val urls = listOf("https://ha.example/api/webhook/abc")
         assertTrue(WriteBackPayload.isActive(true, urls[0], urls, secret))

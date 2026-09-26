@@ -193,7 +193,8 @@ class WriteBackApplier(
                 )
                 SyncFailureNotifier.recordReceiveResult(context, success = false)
             }
-            return WriteBackRound(written = 0, more = accepted.more)
+            // No answer from Health Connect now means none a moment later either; the next sync asks again.
+            return WriteBackRound(written = 0, more = false)
         }
         val now = Instant.now()
         val keepValues = preferencesManager.keepFullPayloads()
@@ -300,7 +301,7 @@ class WriteBackApplier(
             log(success = !roundFailed, written = written, lines = lines, error = null)
             SyncFailureNotifier.recordReceiveResult(context, success = !roundFailed)
         }
-        return WriteBackRound(written = written, more = accepted.more)
+        return WriteBackRound(written = written, more = WriteBackPayload.followUpAfter(accepted.more, roundFailed))
     }
 
     private fun log(success: Boolean, written: Int, lines: List<ReceiveLogLine>, error: String?) {
@@ -331,7 +332,7 @@ class WriteBackApplier(
         /** The write step's budget per response, like the deletion step's (DeletionTracking.TOTAL_BUDGET_MS). */
         const val TOTAL_BUDGET_MS = 20_000L
 
-        /** A permission lookup that does not answer is treated as nothing granted. */
+        /** A permission lookup that does not answer within this is no answer at all: hc_unavailable, never permission_denied. */
         const val PERMISSION_TIMEOUT_MS = 5_000L
 
         /** How long into a sync a follow-up request for a `more: true` backlog may still start. */

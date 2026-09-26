@@ -343,6 +343,16 @@ object WriteBackPayload {
         )
     }
 
+    /**
+     * Whether a sync should ask the integration again after a round (protocol 8.1 step 6):
+     * only when it said more is waiting and the round did not fail. A failed round leaves its
+     * readings pending in Home Assistant under a retryable code, so a follow-up would fetch the
+     * same readings, fail the same way, and repeat that up to the follow-up cap inside one
+     * sync: six log rows, six streak steps and a notification for one hiccup. One round per
+     * sync per failure keeps the streak threshold meaning "three syncs".
+     */
+    fun followUpAfter(more: Boolean, roundFailed: Boolean): Boolean = more && !roundFailed
+
     /** The plausibility bounds per type, inclusive. Diastolic must also stay below systolic. */
     fun inRange(type: WriteBackType, value: Double, diastolic: Double? = null): Boolean = when (type) {
         WriteBackType.WEIGHT -> value in 1.0..500.0
