@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.owen282000.lifedashboard.R
 import com.owen282000.lifedashboard.ReceiveSettings
 import com.owen282000.lifedashboard.ReceiveStatus
+import com.owen282000.lifedashboard.ReceiveSummary
 import com.owen282000.lifedashboard.WriteBackType
 
 /**
@@ -41,6 +42,8 @@ fun ReceiveRow(
     receive: ReceiveSettings,
     status: ReceiveStatus,
     grantedPermissions: Set<String>,
+    /** A secret and an integration URL are saved, so switching on works; see HealthUiState.receiveAvailable. */
+    available: Boolean,
     expanded: Boolean,
     onToggle: () -> Unit,
     onEnabledChange: (Boolean) -> Unit,
@@ -49,17 +52,21 @@ fun ReceiveRow(
     onScanRequested: () -> Unit
 ) {
     val active = receive.enabled && receive.sourceUrl != null
-    val chosen = WriteBackType.entries.filter { it in receive.types }
-    val subtitle = when {
-        !active -> stringResource(R.string.receive_off)
-        chosen.isEmpty() -> stringResource(R.string.receive_no_types_yet)
-        else -> {
-            val types = chosen.joinToString(", ") { it.dataType.displayName }
-            if (status.writtenToday > 0) {
+    val subtitle = when (val summary = ReceiveSummary.of(receive, status, grantedPermissions)) {
+        ReceiveSummary.Off -> stringResource(R.string.receive_off)
+        ReceiveSummary.AwaitingTypes -> stringResource(R.string.receive_no_types_yet)
+        ReceiveSummary.ChooseType -> stringResource(R.string.receive_choose_type)
+        is ReceiveSummary.PermissionMissing -> stringResource(
+            R.string.receive_permission_missing,
+            summary.types.joinToString(", ") { it.dataType.displayName }
+        )
+        is ReceiveSummary.Receiving -> {
+            val types = summary.types.joinToString(", ") { it.dataType.displayName }
+            if (summary.writtenToday > 0) {
                 stringResource(
                     R.string.receive_summary_written,
                     types,
-                    pluralStringResource(R.plurals.receive_written_today, status.writtenToday, status.writtenToday)
+                    pluralStringResource(R.plurals.receive_written_today, summary.writtenToday, summary.writtenToday)
                 )
             } else {
                 types
@@ -88,14 +95,17 @@ fun ReceiveRow(
             onEnabledChange
         )
         if (!active) {
-            // Off, or on without a usable source: pairing is what makes it possible.
-            Text(
-                stringResource(R.string.receive_needs_integration),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            TextButton(onClick = onScanRequested) {
-                Text(stringResource(R.string.webhook_scan_lead), color = accent)
+            // Only without a usable source is pairing the next step; a paired phone just
+            // needs the switch above.
+            if (!available) {
+                Text(
+                    stringResource(R.string.receive_needs_integration),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = onScanRequested) {
+                    Text(stringResource(R.string.webhook_scan_lead), color = accent)
+                }
             }
             return@ExpandableRow
         }

@@ -109,3 +109,38 @@ data class ReceiveStatus(
     val integrationOutdated: Boolean = false,
     val writtenToday: Int = 0
 )
+
+/**
+ * What the Receive row's one-line summary says (issue #62), decided outside Compose so it
+ * can be tested. It names only the types that actually arrive: switched on here, offered by
+ * the integration and granted in Health Connect.
+ */
+sealed interface ReceiveSummary {
+    data object Off : ReceiveSummary
+
+    /** On, but no answer from the integration has named its types yet. */
+    data object AwaitingTypes : ReceiveSummary
+
+    /** The integration's types are known; none is switched on here yet. */
+    data object ChooseType : ReceiveSummary
+
+    /** Switched on and offered, but Health Connect's write permission is missing for all of them. */
+    data class PermissionMissing(val types: List<WriteBackType>) : ReceiveSummary
+
+    data class Receiving(val types: List<WriteBackType>, val writtenToday: Int) : ReceiveSummary
+
+    companion object {
+        fun of(receive: ReceiveSettings, status: ReceiveStatus, granted: Set<String>): ReceiveSummary {
+            if (!receive.enabled || receive.sourceUrl == null) return Off
+            val offered = status.configured.mapNotNull { WriteBackType.fromKey(it) }
+            if (offered.isEmpty()) return AwaitingTypes
+            val chosen = WriteBackType.entries.filter { it in receive.types && it in offered }
+            val working = chosen.filter { it.writePermission in granted }
+            return when {
+                working.isNotEmpty() -> Receiving(working, status.writtenToday)
+                chosen.isNotEmpty() -> PermissionMissing(chosen)
+                else -> ChooseType
+            }
+        }
+    }
+}

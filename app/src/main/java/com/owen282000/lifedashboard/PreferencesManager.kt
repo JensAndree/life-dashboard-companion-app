@@ -498,13 +498,17 @@ class PreferencesManager(context: Context) {
     /** Choosing another source URL, or none, starts Receive's bookkeeping afresh (protocol section 6). */
     fun setReceiveSourceUrl(url: String?) {
         val previous = getReceiveSourceUrl()
+        val changed = previous != url?.takeIf { it.isNotBlank() }
         prefs.edit {
             if (url.isNullOrBlank()) remove(KEY_RECEIVE_SOURCE_URL) else putString(KEY_RECEIVE_SOURCE_URL, url)
-            // What the old source answered says nothing about the new one.
-            putBoolean(KEY_RECEIVE_OUTDATED, false)
-            putString(KEY_RECEIVE_CONFIGURED, "")
+            // What the old source answered says nothing about a new one; the same source
+            // switched off and on again still offers the types it named.
+            if (changed) {
+                putBoolean(KEY_RECEIVE_OUTDATED, false)
+                putString(KEY_RECEIVE_CONFIGURED, "")
+            }
         }
-        if (previous != url?.takeIf { it.isNotBlank() }) clearWriteBackState()
+        if (changed) clearWriteBackState()
     }
 
     fun getReceiveStatus(): ReceiveStatus = ReceiveStatus(

@@ -69,6 +69,8 @@
     <string name="receive_source">Bron: %1$s</string>
     <string name="receive_update_integration">Werk de Life Dashboard-integratie bij om metingen te ontvangen, of controleer of deze webhook wel van de integratie is: het laatste antwoord bevatte geen metingenprotocol.</string>
     <string name="receive_no_types_yet">De volgende synchronisatie vraagt Home Assistant welke types het aanbiedt.</string>
+    <string name="receive_choose_type">Zet hieronder een type aan om het te ontvangen.</string>
+    <string name="receive_permission_missing">Schrijftoestemming ontbreekt: %1$s</string>
     <string name="receive_types_chosen_in_ha">Welke entiteiten worden verstuurd, kies je in Home Assistant, bij de opties van de integratie.</string>
     <string name="receive_older_measurements">Oudere metingen accepteren</string>
     <string name="receive_older_measurements_description">Schrijf ook metingen ouder dan 30 dagen, voor een geschiedenis die vanuit Home Assistant wordt gestuurd.</string>

@@ -287,6 +287,14 @@ class HealthConnectViewModelTest {
     }
 
     @Test
+    fun `receive is available only with a saved secret and an integration url`() {
+        assertTrue(vm(pairedSettings(haUrl)).state.value.receiveAvailable)
+        assertFalse(vm(pairedSettings(haUrl, secret = "")).state.value.receiveAvailable)
+        assertFalse(vm(pairedSettings("https://grafana.example/hook")).state.value.receiveAvailable)
+        assertFalse(vm(FakeAppSettings()).state.value.receiveAvailable)
+    }
+
+    @Test
     fun `receive goes on with the one Home Assistant webhook as its source`() {
         val settings = pairedSettings("https://grafana.example/hook", haUrl)
         val vm = vm(settings)

@@ -71,6 +71,8 @@
     <string name="receive_source">Source: %1$s</string>
     <string name="receive_update_integration">Update the Life Dashboard integration to receive measurements, or check that this webhook is the integration\'s: its last answer carried no measurements protocol.</string>
     <string name="receive_no_types_yet">The next sync asks Home Assistant which types it offers.</string>
+    <string name="receive_choose_type">Switch on a type below to receive it.</string>
+    <string name="receive_permission_missing">Write permission missing: %1$s</string>
     <string name="receive_types_chosen_in_ha">Choose which entities are sent in Home Assistant, under the integration\'s options.</string>
     <string name="receive_older_measurements">Accept older measurements</string>
     <string name="receive_older_measurements_description">Also write measurements older than 30 days, for a history sent from Home Assistant.</string>

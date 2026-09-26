@@ -235,6 +235,7 @@ fun HealthConnectContent(
                 receive = state.receive,
                 status = state.receiveStatus,
                 grantedPermissions = state.grantedPermissions,
+                available = state.receiveAvailable,
                 expanded = receiveExpanded,
                 onToggle = { receiveExpanded = !receiveExpanded },
                 onEnabledChange = actions::setReceiveEnabled,

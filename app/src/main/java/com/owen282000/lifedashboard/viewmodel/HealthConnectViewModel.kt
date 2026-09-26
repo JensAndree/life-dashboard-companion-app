@@ -68,6 +68,13 @@ data class HealthUiState(
     val receiveSourceChoice: List<String>? = null
 ) {
     val hasChanges: Boolean get() = draft.differsFrom(saved)
+
+    /**
+     * Whether Receive can be switched on: the saved section has a signing secret and a URL
+     * that looks like the integration's. Only then does the Receive row stop asking to pair.
+     */
+    val receiveAvailable: Boolean get() =
+        saved.webhook.secret.isNotBlank() && WriteBackPayload.sourceUrlChoice(saved.webhook.urls) != SourceUrlChoice.None
     val hasAnyPermission: Boolean get() = grantedPermissions.isNotEmpty()
 
     /** A phone that only receives has nothing to read, but every sync is still the round trip that fetches measurements. */
