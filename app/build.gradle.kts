@@ -77,7 +77,8 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Puts WorkManager in test mode before the application schedules anything; see the class.
+        testInstrumentationRunner = "com.owen282000.lifedashboard.harness.LdTestRunner"
     }
 
     signingConfigs {
@@ -137,6 +138,36 @@ android {
     }
 }
 
+// The instrumented suite validates every payload it receives against docs/webhook-schema.json.
+// The file is copied into the test APK's assets at build time rather than kept as a second copy,
+// so the documented schema stays the only one and a change to it is tested at once.
+abstract class CopyWebhookSchema : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val schema: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        schema.get().asFile.copyTo(File(out, "webhook-schema.json"), overwrite = true)
+    }
+}
+
+val copyWebhookSchema = tasks.register<CopyWebhookSchema>("copyWebhookSchemaForAndroidTest") {
+    schema.set(rootProject.layout.projectDirectory.file("docs/webhook-schema.json"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.androidTest?.sources?.assets?.addGeneratedSourceDirectory(copyWebhookSchema, CopyWebhookSchema::outputDir)
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
@@ -179,7 +210,14 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // The instrumented suite (scripts/instrumented.sh). None of this reaches a release build.
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.androidx.test.uiautomator)
+    androidTestImplementation(libs.androidx.work.testing)
+    androidTestImplementation(libs.okhttp.mockwebserver3)
+    androidTestImplementation(libs.json.schema.validator)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)

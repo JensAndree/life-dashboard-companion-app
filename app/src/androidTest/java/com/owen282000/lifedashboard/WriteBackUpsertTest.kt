@@ -4,11 +4,12 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.owen282000.lifedashboard.harness.AppStateRule
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.Duration
@@ -18,32 +19,20 @@ import java.time.Instant
  * Proves the upsert rule Receive relies on (issue #62): the same clientRecordId written
  * again with an equal or lower clientRecordVersion leaves the stored value alone, and a
  * higher version replaces it, so a resend from Home Assistant is harmless and a correction
- * wins. Runs on a device or emulator with Health Connect; the write permission is asked for
- * through Health Connect's own dialog the first time, like SeedHealthConnect does:
- *
- *   adb shell am instrument -w -e class com.owen282000.lifedashboard.WriteBackUpsertTest \
- *     com.owen282000.lifedashboard.test/androidx.test.runner.AndroidJUnitRunner
+ * wins. Part of the instrumented suite (scripts/instrumented.sh); the write permission comes
+ * from [AppStateRule], which also resets the app first.
  */
 @RunWith(AndroidJUnit4::class)
 class WriteBackUpsertTest {
+
+    @get:Rule
+    val appState = AppStateRule()
 
     @Test
     fun equalAndLowerVersionsAreIgnoredAndAHigherVersionOverwrites() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val client = HealthConnectClient.getOrCreate(context)
         val manager = HealthConnectManager(context)
-        val permission = WriteBackType.WEIGHT.writePermission
-
-        if (permission !in client.permissionController.getGrantedPermissions()) {
-            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                scenario.onActivity { it.requestPermissions(arrayOf(permission), 4712) }
-                repeat(90) {
-                    Thread.sleep(1000)
-                    if (permission in client.permissionController.getGrantedPermissions()) return@repeat
-                }
-            }
-            check(permission in client.permissionController.getGrantedPermissions()) { "WRITE_WEIGHT was not granted" }
-        }
 
         val time = Instant.now().minus(Duration.ofMinutes(5))
         val id = "sensor.upsert_test_weight@${time.toEpochMilli()}"
