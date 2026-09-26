@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-09-26
+
 ### Added
 
 - Receive: measurements from Home Assistant into Health Connect, for a scale or blood

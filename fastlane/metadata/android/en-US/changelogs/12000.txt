@@ -1,0 +1,8 @@
+Added:
+
+- Receive: measurements from Home Assistant into Health Connect, for a scale or blood
+  pressure monitor that talks to Home Assistant and not to the phone
+  (#62). The Receive
+  row on the Health tab switches it on per type (weight, height, body fat, lean body mass,
+  bone mass, body water mass, blood pressure), and each type asks for its own Health Connect
+... full changelog: https://github.com/owen282000/life-dashboard-companion-app/blob/main/CHANGELOG.md
