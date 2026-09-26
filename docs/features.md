@@ -55,7 +55,7 @@ The [Home Assistant companion app](https://companion.home-assistant.io/docs/core
 | Exercise sessions, nutrition, sleep stages, cycle tracking, mindfulness, skin temperature | Missing ([open issue](https://github.com/home-assistant/android/issues/4804)) | Supported |
 | Detail | Latest value or daily aggregate per sensor | Every record, with the source app and a stable id, plus deduplicated daily totals |
 | History | "Only the last 30 days of data is used" | Unlimited, with backfill of up to a year |
-| Screen time | No sensor | Foreground time per app, custom day boundary |
+| Screen time | Last used app; total screen-on time through History Stats | Foreground time per app, custom day boundary |
 | Destination | Your Home Assistant | Any webhook backend, plus MQTT with Home Assistant Discovery |
 | Direction | Export only | Both: Health Connect to your server, and Home Assistant to Health Connect |
 | Delivery | Sensor updates | HMAC-signed webhooks, retries, store-and-forward outbox, delivery logs |

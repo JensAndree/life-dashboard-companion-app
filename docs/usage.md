@@ -12,17 +12,11 @@
 ### From releases (recommended)
 
 1. Download the latest APK from [Releases](https://github.com/owen282000/life-dashboard-companion-app/releases/latest)
-2. Optionally verify it before installing. Every release is signed with the same key and carries a provenance attestation tying it to the commit it was built from:
-
-   ```bash
-   gh attestation verify app-release.apk --repo owen282000/life-dashboard-companion-app
-   apksigner verify --print-certs app-release.apk | grep "SHA-256 digest"
-   ```
-
-   The first command is silent and exits 0 when the APK is genuine; the second must print the fingerprint listed in [SECURITY.md](../SECURITY.md#verifying-a-release), which gives it in both the colon-separated and the plain form.
-3. Install it on your Android device (enable "Install from unknown sources" if needed)
+2. Install it on your Android device (enable "Install from unknown sources" if needed)
 
 To keep it updated automatically from GitHub releases, add the repository to [Obtainium](https://github.com/ImranR98/Obtainium).
+
+Every release is signed with the same key and carries a provenance attestation tying it to the commit it was built from. [SECURITY.md](../SECURITY.md#verifying-a-release) explains how to check both before you install, if you want to.
 
 ### Build from source
 

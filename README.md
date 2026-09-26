@@ -43,7 +43,7 @@
 
 Also on iPhone? [Life Dashboard Companion for iOS](https://github.com/owen282000/life-dashboard-companion-app-ios) sends a compatible payload from Apple Health (HealthKit), so both apps can feed the same backend.
 
-Already using the Home Assistant companion app's health sensors? [See how this compares](docs/features.md#how-this-compares-to-the-home-assistant-companion-app): 33 types instead of 25, full history instead of 30 days, and screen time, which no other tool exports.
+Already using the Home Assistant companion app's health sensors? [See how this compares](docs/features.md#how-this-compares-to-the-home-assistant-companion-app): 33 types instead of 25, full history instead of 30 days, writing into Health Connect, and screen time per app next to your health data. And [why this is not part of the companion app](#why-is-this-not-part-of-the-companion-app).
 
 ## Quick start
 
@@ -86,6 +86,16 @@ tracking are events rather than values and stay webhook-only. No YAML, no server
 setup; states are retained, so they survive a restart.
 
 The two-minute walkthrough is in [docs/usage.md](docs/usage.md#phone-to-home-assistant-in-two-minutes); [docs/features.md](docs/features.md#home-assistant-and-mqtt) lists every sensor.
+
+### Why is this not part of the companion app?
+
+A fair question, and the companion app's maintainers have answered parts of it themselves.
+
+- **History.** The companion app turns Health Connect into sensors, and its documentation says "only the last 30 days of data is used". On adding many more types, a maintainer wrote: "I'm not sure there is a solution for the large amount of sensors short term as the data model on the server (HA core) is a flat list of sensors linked to the device" ([#7342](https://github.com/home-assistant/android/pull/7342#issuecomment-5375317051)). The Life Dashboard integration puts every day in long-term statistics instead, so a year of backfill is a year of history.
+- **Writing into Health Connect.** A pull request that added it was closed with "Adding this will cause the battle with Google to get approved. For now we are not ready to have this fight" ([#6799](https://github.com/home-assistant/android/pull/6799#issuecomment-4379264993)). In the issue that asks for it, a maintainer suggested, as a personal opinion and not a decision, that "maybe it should be considered putting this in a standalone, non-HA app" ([#5650](https://github.com/home-assistant/android/issues/5650#issuecomment-4369657798)).
+- **Screen time.** The companion app has a last used app sensor, and total screen-on time can be derived from it with History Stats. Time per app is not there.
+
+The two work side by side: keep the companion app for presence, notifications and device sensors, and add this one for the health history, writing back into Health Connect, and screen time per app. The [full comparison](docs/features.md#how-this-compares-to-the-home-assistant-companion-app) goes row by row.
 
 ## What it sends
 
