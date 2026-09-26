@@ -22,11 +22,18 @@ import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import kotlin.reflect.KClass
 
-class HealthConnectManager(private val context: Context) {
+class HealthConnectManager(
+    private val context: Context,
+    /**
+     * Where the client comes from. Always the real one in the app; the instrumented suite wraps
+     * it to count calls or to make one hang, which no shell command can do to Health Connect.
+     */
+    private val clientFactory: (Context) -> HealthConnectClient = { HealthConnectClient.getOrCreate(it) }
+) {
 
     private val healthConnectClient by lazy {
         try {
-            HealthConnectClient.getOrCreate(context)
+            clientFactory(context)
         } catch (e: Exception) {
             throw IllegalStateException("Health Connect is not available on this device: ${e.message}", e)
         }

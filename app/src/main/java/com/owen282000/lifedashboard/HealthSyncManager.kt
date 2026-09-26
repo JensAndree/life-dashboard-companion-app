@@ -31,10 +31,13 @@ private const val MAX_PASSES_PER_BACKFILL_WINDOW = 100
 /** Serialises [HealthSyncManager.performSync] across every caller in the process. */
 private val SYNC_LOCK = Mutex()
 
-class HealthSyncManager(private val context: Context) {
+class HealthSyncManager(
+    private val context: Context,
+    /** The app's own by default; the instrumented suite passes one with a wrapped client. */
+    private val healthConnectManager: HealthConnectManager = HealthConnectManager(context)
+) {
 
     private val preferencesManager = PreferencesManager(context)
-    private val healthConnectManager = HealthConnectManager(context)
 
     suspend fun previewData(): Result<String> = withContext(Dispatchers.IO) {
         try {
