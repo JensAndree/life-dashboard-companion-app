@@ -35,7 +35,7 @@ class ExportManager(private val context: Context) {
 
     fun exportAsCsv(logs: List<WebhookLog>): String {
         val sb = StringBuilder()
-        sb.appendLine("timestamp,log_type,url,status_code,success,data_type,record_count,error_message")
+        sb.appendLine("timestamp,log_type,direction,url,status_code,success,data_type,record_count,error_message")
 
         val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault())
@@ -50,6 +50,7 @@ class ExportManager(private val context: Context) {
             sb.appendLine(
                 "${csvEscape(timestamp)}," +
                 "${csvEscape(logType)}," +
+                "${csvEscape(log.direction.lowercase())}," +
                 "${csvEscape(log.url)}," +
                 "${log.statusCode ?: ""}," +
                 "${log.success}," +

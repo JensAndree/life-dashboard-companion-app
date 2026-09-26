@@ -398,7 +398,11 @@ class HealthSyncManager(private val context: Context) {
     /** The heartbeat body (protocol section 3.2): timestamp, version and source, nothing else; the block is added per URL. */
     private fun heartbeatPayload(): String = buildJsonPayload(EMPTY_HEALTH_DATA)
 
-    /** A manager that talks to the source URL alone, for the heartbeat and the follow-up requests. */
+    /**
+     * A manager that talks to the source URL alone, for the heartbeat and the follow-up
+     * requests. Those carry no records, so a successful one leaves no row in the log and no
+     * mark in the statistics; what they fetched is the Receive row, and a failed one is logged.
+     */
     private fun sourceOnlyManager(post: SourcePost, dataType: String) = WebhookManager(
         webhookUrls = listOf(post.url),
         context = context,
@@ -407,7 +411,8 @@ class HealthSyncManager(private val context: Context) {
         logType = LogType.HEALTH_CONNECT,
         customHeaders = preferencesManager.getHealthWebhookHeaders(),
         signingSecret = preferencesManager.getHealthWebhookSecret(),
-        source = post
+        source = post,
+        logSuccess = false
     )
 
     /**

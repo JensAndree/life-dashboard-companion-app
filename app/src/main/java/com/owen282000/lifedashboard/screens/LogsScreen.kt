@@ -183,14 +183,14 @@ fun LogsScreen() {
 
 @Composable
 private fun SyncStatsCard(logs: List<WebhookLog>) {
-    val total = logs.size
-    val successful = logs.count { it.success }
-    val successRate = if (total > 0) (successful * 100) / total else 0
-    // What went in from Home Assistant is not a delivery, so it stays out of the record total
-    // and the per-source ratio; its own count is in the Receive row.
+    // What went in from Home Assistant is not a delivery, so it stays out of every figure on
+    // this card; its own count is in the Receive row.
     val outgoing = logs.filter { it.direction != LogDirection.IN.name }
+    val total = outgoing.size
+    val successful = outgoing.count { it.success }
+    val successRate = if (total > 0) (successful * 100) / total else 0
     val totalRecords = outgoing.filter { it.success }.sumOf { it.recordCount ?: 0 }
-    val lastSuccess = logs.filter { it.success }.maxByOrNull { it.timestamp }
+    val lastSuccess = outgoing.filter { it.success }.maxByOrNull { it.timestamp }
     val healthSyncs = outgoing.count { it.logType == LogType.HEALTH_CONNECT.name }
     val healthSuccess = outgoing.count { it.logType == LogType.HEALTH_CONNECT.name && it.success }
     val screenSyncs = logs.count { it.logType == LogType.SCREEN_TIME.name }

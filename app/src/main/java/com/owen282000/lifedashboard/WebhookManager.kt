@@ -44,7 +44,13 @@ class WebhookManager(
      * The one URL that gets the `writeback` block and whose response is read. Every other URL
      * gets the plain payload and its response body is never looked at, however it is signed.
      */
-    private val source: SourcePost? = null
+    private val source: SourcePost? = null,
+    /**
+     * False for the heartbeat of Receive: a request that carries no records is not a delivery,
+     * so a successful one writes no log row and counts nowhere; a failed one is still logged,
+     * because that is where the user looks when Receive stops.
+     */
+    private val logSuccess: Boolean = true
 ) {
 
     /**
@@ -222,6 +228,7 @@ class WebhookManager(
         note: String? = null
     ) {
         context?.let {
+            if (success && !logSuccess) return
             if (success) {
                 LifetimeStats.recordDelivery(it, recordCount ?: 0, rawPayload?.length ?: 0, logType)
             }
