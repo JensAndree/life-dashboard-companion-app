@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- Receive: measurements from Home Assistant into Health Connect, for a scale or blood
+  pressure monitor that talks to Home Assistant and not to the phone
+  ([#62](https://github.com/owen282000/life-dashboard-companion-app/issues/62)). The Receive
+  row on the Health tab switches it on per type (weight, height, body fat, lean body mass,
+  bone mass, body water mass, blood pressure), and each type asks for its own Health Connect
+  write permission the moment its switch goes on; nothing else is declared, and the bulk
+  permission request stays read-only. The measurements ride back in the Life Dashboard
+  integration's answer (0.7.0 or later) to the webhook the app already sends, signed under a
+  key derived from the shared secret and bound to that request, so a proxy or a cloudhook in
+  between cannot inject a reading. Readings keep their own time, a resend is an upsert on the
+  integration's id and version, readings older than 30 days need "Accept older measurements",
+  and the app tells the integration per reading what happened. Every round is a row in the
+  Logs tab, "Health · from Home Assistant", folding out to each reading; the line under Sync
+  Now says how much was written. A sync with nothing to send still asks the integration once.
+- Phone name, under Advanced on both tabs, for two phones on one MQTT broker. A named phone
+  publishes under its own device, "Life Dashboard Companion (name)", and its own topics
+  under the base topic; a phone without a name publishes exactly as before.
+
+### Changed
+
+- Records the app wrote itself through Receive are left out of the outgoing payload and of
+  `deleted_records`, so what came from Home Assistant never goes back to it. `_diagnostics`
+  counts them per type as `own_records_skipped`.
+- The release manifest declares write permissions for the seven Receive types. They are
+  requested one at a time, when a type is switched on under Receive.
+
 ## [1.19.0] - 2026-09-26
 
 ### Added

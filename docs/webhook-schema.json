@@ -71,7 +71,76 @@
     },
     "_diagnostics": {
       "type": "object",
-      "description": "Per-type read diagnostics; see README"
+      "description": "Per-type read diagnostics; see README. Since 1.20.0 each entry also carries own_records_skipped: records this app wrote itself (Receive) that were left out of the payload."
+    },
+    "writeback": {
+      "type": "object",
+      "description": "Health Connect payloads to the Life Dashboard integration only, when Receive is on (1.20.0): what the phone can write, and the outcome of what the integration sent last time. Absent on every other payload. The integration's answer is described in webhook.md under Inbound.",
+      "properties": {
+        "protocol": {
+          "const": 1
+        },
+        "types": {
+          "type": "array",
+          "description": "The types switched on and permitted; the integration sends readings of these only",
+          "items": {
+            "enum": [
+              "weight",
+              "height",
+              "body_fat",
+              "lean_body_mass",
+              "bone_mass",
+              "body_water_mass",
+              "blood_pressure"
+            ]
+          }
+        },
+        "history": {
+          "type": "boolean",
+          "description": "True when the phone accepts measurements older than 30 days"
+        },
+        "ack": {
+          "type": "array",
+          "description": "Ids of readings written since the previous request",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failed": {
+          "type": "array",
+          "description": "Readings not written, each with a code; never a value",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "permission_denied",
+                  "unsupported_type",
+                  "out_of_range",
+                  "too_old",
+                  "invalid",
+                  "rate_limited",
+                  "hc_unavailable"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "code"
+            ]
+          }
+        }
+      },
+      "required": [
+        "protocol",
+        "types",
+        "history",
+        "ack",
+        "failed"
+      ]
     },
     "steps": {
       "type": "array",

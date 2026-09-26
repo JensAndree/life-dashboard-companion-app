@@ -36,6 +36,7 @@
 
 - **Own your data** - health data goes to your own server, not a third-party cloud
 - **Flexible delivery** - any backend that accepts a JSON POST, or MQTT with Home Assistant Discovery
+- **Both ways** - a scale or blood pressure monitor that talks to Home Assistant lands in Health Connect, and from there in Samsung Health or Google Health
 - **Combined** - Health Connect and Screen Time in one app
 - **33 health data types** - all major Health Connect types, per-type toggles
 - **Modern UI** - Jetpack Compose and Material 3, with dark mode
@@ -65,7 +66,9 @@ at it, or use the scan button in the app, and the address and the signing secret
 themselves in. It is also the way that keeps history: every day the app sends lands in
 Home Assistant's long-term statistics on its own date, so a year of backfill shows up as a
 year of steps, sleep, heart rate and screen time per day, and the integration ships a
-dashboard to start from.
+dashboard to start from. Since 1.20.0 it also works the other way: measurements from a
+scale or a blood pressure monitor that Home Assistant knows are written into Health Connect,
+per type and behind that type's own write permission.
 
 [![Open the integration in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=owen282000&repository=life-dashboard-ha&category=integration)
 

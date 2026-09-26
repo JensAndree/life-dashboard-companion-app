@@ -12,6 +12,7 @@ Want a ready-made backend? [life-dashboard-stack](https://github.com/owen282000/
   - [Daily totals](#daily-totals) - [Deletions](#deletions) - [Data resolution](#data-resolution) - [Diagnostics](#diagnostics)
 - [Screen Time payload](#screen-time-payload)
 - [Delivery, retries and signing](#delivery-retries-and-signing)
+- [Inbound: what the integration may answer](#inbound-what-the-integration-may-answer)
 - [Example backend integrations](#example-backend-integrations)
 
 ## Health Connect payload
@@ -426,6 +427,130 @@ function verifySignature(req, secret) {
     crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 ```
+
+## Inbound: what the integration may answer
+
+From 1.20.0 the app can also take measurements the other way: a scale or a blood pressure monitor that talks to Home Assistant lands in Health Connect, and from there in Samsung Health or Google Health. This is **Receive** on the Health Connect tab, and it needs the [Life Dashboard integration](https://github.com/owen282000/life-dashboard-ha) 0.7.0 or later. There is no second channel: the measurements ride back in the integration's answer to the POST the app already makes. A receiver that is not the integration is not affected in any way; its answer is never read.
+
+### What the app adds to its request
+
+When Receive is on, the payload for **one** webhook URL, the source URL (the section's URL that contains `/api/webhook/`; the app asks which when there are several), carries a `writeback` block. Every other URL of the section gets the plain payload, and the block never appears in Screen Time or backfill payloads.
+
+```json
+"writeback": {
+  "protocol": 1,
+  "types": ["weight", "body_fat", "blood_pressure"],
+  "history": false,
+  "ack": ["sensor.zejulio_weight@1758869400000"],
+  "failed": [
+    {"id": "sensor.zejulio_body_fat@1758869400000", "code": "permission_denied"}
+  ]
+}
+```
+
+- `protocol` is always `1`.
+- `types` are the types the user switched on **and** holds the Health Connect write permission for; the integration sends readings of those types only.
+- `history` is `true` when "Accept older measurements" is on. It is informational: the app enforces the 30-day window itself.
+- `ack` names the readings written since the previous request (inserted, or already present at the same or a higher version and therefore left alone).
+- `failed` names the readings that were not written, each with a code from the table below. Never a value.
+
+A sync that has nothing to send still makes one request to the source URL when Receive is on, a **heartbeat**: `timestamp`, `app_version`, `source` and the `writeback` block, no record arrays, no `daily_totals`, no `sequence`. It is signed like any other request and never queued in the outbox.
+
+### The answer
+
+The integration answers every accepted POST (status 200) with a JSON body and, since 0.7.0, a signature over it:
+
+```
+X-Signature: sha256=<hex of HMAC-SHA256(k_resp, raw response body)>
+k_resp = HMAC-SHA256(key = secret as UTF-8 bytes, message = "life-dashboard-response-v1" as UTF-8 bytes)
+```
+
+The response key is derived from the shared secret and is never the secret itself, so a request the app signed can never be played back to it as an answer. The app checks, in this order, and stops at the first fault without writing anything: the body is at most 262144 bytes; the header is present and equal (in constant time) to its own computation; `life_dashboard.writeback` is `1`; `writeback.in_reply_to` equals the `X-Signature` the app put on this very request; `writeback.issued_at` is within 10 minutes of the phone's clock; and there are at most 200 readings. A rejected answer is one row in the Logs tab. An answer without the protocol block at all, which is what an integration older than 0.7.0 sends, makes the Receive row say "Update the Life Dashboard integration to receive measurements"; an app with Receive off never reads the body.
+
+```json
+{
+  "life_dashboard": {"version": "0.7.0", "writeback": 1},
+  "writeback": {
+    "in_reply_to": "sha256=…",
+    "issued_at": "2026-09-27T06:35:01Z",
+    "configured": ["weight", "body_fat", "blood_pressure", "height"],
+    "pending": [
+      {
+        "id": "sensor.zejulio_weight@1758955800000",
+        "version": 1,
+        "type": "weight",
+        "kilograms": 81.35,
+        "time": "2026-09-27T06:30:00Z",
+        "zone_offset": "+02:00",
+        "recording_method": "auto",
+        "device": {"type": "scale", "manufacturer": "Xiaomi", "model": "Mi Body Composition Scale 2"}
+      },
+      {
+        "id": "sensor.omron_systolic@1758955920000",
+        "version": 1,
+        "type": "blood_pressure",
+        "systolic": 128.0,
+        "diastolic": 82.0,
+        "time": "2026-09-27T06:32:00Z",
+        "zone_offset": "+02:00",
+        "recording_method": "active",
+        "body_position": "sitting_down",
+        "measurement_location": "left_upper_arm",
+        "device": {"type": "unknown", "manufacturer": "Omron", "model": "M7 Intelli IT"}
+      }
+    ],
+    "more": false
+  }
+}
+```
+
+`configured` lists the types the integration has a mapping for, so the app offers a switch for exactly those. `pending` holds at most 200 readings, oldest first, and only of the types the request asked for; `more: true` says there are more waiting, and the app asks again in the same sync (in heartbeat form, at most five times) or on the next one. `pending` and `more` are absent when the request carried no `writeback.types`.
+
+### A reading
+
+| Field | Required | Content |
+|---|---|---|
+| `id` | yes | `{entity_id}@{measured_at_ms}`; becomes the Health Connect `clientRecordId` |
+| `version` | yes | integer from 1; becomes `clientRecordVersion`. A correction of the same measurement is the same `id` with `version + 1` |
+| `type` | yes | one of the types below |
+| type fields | yes | the field names of the outbound payload, in the units Health Connect wants |
+| `time` | yes | the measurement time in UTC with `Z`, never the sync time |
+| `zone_offset` | no | `"+02:00"`; absent means the phone's zone |
+| `recording_method` | no | `auto` (default), `active` or `manual` |
+| `device` | no | `{"type", "manufacturer", "model"}`; `type` is one of `unknown`, `watch`, `phone`, `scale`, `ring`, `head_mounted`, `fitness_band`, `chest_strap`, `smart_display`, anything else counts as `unknown` |
+| `time_source` | no | `"state"` when the integration used the entity's last change for lack of a timestamp entity; informational, it goes to the app's log |
+
+| `type` | Fields | Health Connect record |
+|---|---|---|
+| `weight` | `kilograms` | WeightRecord |
+| `height` | `meters` | HeightRecord |
+| `body_fat` | `percentage` | BodyFatRecord |
+| `lean_body_mass` | `kilograms` | LeanBodyMassRecord |
+| `bone_mass` | `kilograms` | BoneMassRecord |
+| `body_water_mass` | `kilograms` | BodyWaterMassRecord |
+| `blood_pressure` | `systolic`, `diastolic`, optional `body_position` (`unknown`, `standing_up`, `sitting_down`, `lying_down`, `reclining`) and `measurement_location` (`unknown`, `left_wrist`, `right_wrist`, `left_upper_arm`, `right_upper_arm`) | BloodPressureRecord |
+
+Unknown fields in a reading are ignored; an unknown `type` is reported as `unsupported_type`. BMI, muscle mass and visceral fat have no Health Connect record and are not offered.
+
+### What the app checks before it writes
+
+Every reading is validated on the phone, and a reading that fails is reported back under `failed` with one of these codes:
+
+| Code | Meaning | What the integration does |
+|---|---|---|
+| `permission_denied` | the write permission for this type is missing or was revoked | drops it and raises a repair issue asking for the permission |
+| `unsupported_type` | a type this app version does not know | drops it and asks to update the app |
+| `out_of_range` | outside the bounds below | drops it and warns in the Home Assistant log, naming the entity and not the value |
+| `too_old` | older than 30 days while `history` is off | drops it and warns; the backfill button explains the switch |
+| `invalid` | a field missing or not a number, or a time more than 5 minutes in the future | drops it and warns |
+| `rate_limited` | Health Connect's quota | keeps it and offers it again next round |
+| `hc_unavailable` | Health Connect did not answer in time, or answered with an error | keeps it and offers it again next round |
+
+Bounds, inclusive: weight 1 to 500 kg; height 0.3 to 2.8 m; body fat 1 to 80 %; lean body mass 1 to 300 kg; bone mass 0.1 to 30 kg; body water mass 1 to 300 kg; systolic 30 to 300 mmHg; diastolic 10 to 250 mmHg and below systolic. Exactly zero is always out of range.
+
+### Idempotence
+
+The `id` becomes the record's `clientRecordId` and the `version` its `clientRecordVersion`, which Health Connect scopes to the writing app. Sending the same reading again is therefore harmless (the app acknowledges it without a write once it knows the id at that version, and Health Connect ignores an equal or lower version anyway), and a correction with a higher version replaces the earlier record. The app cannot touch records other apps wrote. Records the app writes carry the app's own package as `source`, and the app leaves them out of its outgoing payloads and out of `deleted_records`, so what came from Home Assistant never goes back to it; `_diagnostics` counts them per type as `own_records_skipped`.
 
 ## Example backend integrations
 

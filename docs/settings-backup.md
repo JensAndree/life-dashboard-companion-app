@@ -15,10 +15,12 @@ Webhook auth headers, HMAC signing secrets and MQTT passwords are stored encrypt
 | HMAC signing secrets | Lifetime statistics |
 | Sync intervals | Health Connect permissions |
 | MQTT brokers, topics and switches | Usage access permission |
-| The 33 data-type toggles | |
-| Daily totals, plain HTTP, full payloads, day boundary, failure threshold | |
+| The 33 data-type toggles | Which entities Home Assistant sends (that choice lives in the integration) |
+| Daily totals, plain HTTP, full payloads, day boundary, failure threshold | The Receive ledger (which readings were written, and their Health Connect ids) |
+| Receive: the switch, the types, "Accept older measurements" and the source URL | |
+| Phone name (MQTT) | |
 
-Sync state is left out on purpose. Those watermarks describe how far *this* install has read from Health Connect; restoring them on another device would make the next sync skip everything written before the imported timestamp. After an import the new device syncs from its own starting point.
+Sync state is left out on purpose. Those watermarks describe how far *this* install has read from Health Connect; restoring them on another device would make the next sync skip everything written before the imported timestamp. After an import the new device syncs from its own starting point. The Receive ledger stays behind for the same reason: on a new phone the integration offers again what was not acknowledged, and since every reading is an upsert on its own id that is harmless. The write permissions are Android's and are asked for again per type.
 
 The client certificate lives in Android's credential store and never leaves it, so an export could only carry its name, which means nothing on another phone. Install the certificate on the new device and pick it again under Advanced settings. Android's own backup and device transfer do carry the name along with the other settings; until you pick the certificate again, the webhook log says it is unavailable and no webhook is sent.
 
@@ -71,10 +73,17 @@ Plain exports are readable JSON:
   "options": {
     "enabled_data_types": ["STEPS", "HEART_RATE"],
     "include_daily_totals": true,
-    "allow_http_webhooks": false
+    "allow_http_webhooks": false,
+    "phone_name": "Pixel 8",
+    "receive_enabled": true,
+    "receive_types": ["WEIGHT", "BLOOD_PRESSURE"],
+    "receive_older_measurements": false,
+    "receive_source_url": "https://example.com/health"
   }
 }
 ```
+
+`receive_source_url` is only applied when it is one of the health webhook URLs in the same file.
 
 Unknown keys are ignored on import, so a file from a newer version still restores what the installed build understands. Data types are stored by name, and names this build does not know are skipped rather than failing the import.
 

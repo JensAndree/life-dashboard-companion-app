@@ -57,6 +57,7 @@ The [Home Assistant companion app](https://companion.home-assistant.io/docs/core
 | History | "Only the last 30 days of data is used" | Unlimited, with backfill of up to a year |
 | Screen time | No sensor | Foreground time per app, custom day boundary |
 | Destination | Your Home Assistant | Any webhook backend, plus MQTT with Home Assistant Discovery |
+| Direction | Export only | Both: Health Connect to your server, and Home Assistant to Health Connect |
 | Delivery | Sensor updates | HMAC-signed webhooks, retries, store-and-forward outbox, delivery logs |
 | Android | 9+ on the Play build, 14+ otherwise | 8.0+ |
 
@@ -80,6 +81,28 @@ broker and does not need the history. Either one, not both.
 - Optional TLS and username/password authentication; credentials are stored encrypted on-device
 - 24 of the 33 types get a sensor. Event-like types (exercise, nutrition, mindfulness, cycle tracking) remain webhook-only. Every publish carries the full set of sensors the app has mapped so far, so a new broker or a fresh Home Assistant sees the whole device after one sync
 - Screen Time publishes too: today's and yesterday's total minutes and today's most used app (top five apps as attributes), under the same Home Assistant device. Health Connect and Screen Time each have their own switch and base topic and share one broker connection by default; either section can switch to its own broker.
+- **Two phones on one broker**: give each a name under Advanced > Phone name. A named phone publishes under its own device (`Life Dashboard Companion (Pixel 8)`) and its own topics (`<base>/<slug>/<key>/state`); a phone without a name publishes exactly what it always did, so a household with one phone changes nothing.
+
+## Receiving from Home Assistant
+
+The other direction, from 1.20.0: a scale or a blood pressure monitor that talks to Home Assistant, and not to the phone, lands in Health Connect. The **Receive** row on the Health Connect tab switches it on per type, and the [Life Dashboard integration](https://github.com/owen282000/life-dashboard-ha) (0.7.0 or later) chooses which entities go, per phone, under its options. There is no second channel and no second secret: the measurements ride back in the integration's signed answer to the webhook the app already sends, bound to that very request, so nothing between the phone and Home Assistant can slip a reading in.
+
+- Seven types: weight, height, body fat, lean body mass, bone mass, body water mass and blood pressure. Each has its own switch and its own Health Connect write permission, asked for the moment the switch goes on and never in the bulk request; refused means off. Nothing else is declared.
+- Measurements keep their own time, not the sync's, and a repeat is an upsert: the integration's id and version become Health Connect's client record id and version, so a resend changes nothing and a correction wins.
+- Readings older than 30 days are refused unless "Accept older measurements" is on, which is what the integration's "Send history to phone" button needs.
+- What the app writes never goes back out: those records are left out of the outgoing payload and of `deleted_records`, and counted in `_diagnostics` as `own_records_skipped`.
+- When another app already writes the same type to Health Connect, the app says so when the switch goes on: a scale's own app plus Home Assistant is two readings a day.
+- Every round is a row in the Logs tab, folding out to each reading with its outcome; values only when full payloads are kept.
+
+Health Connect is the destination this app can promise; what another app shows of it is that app's choice. Checked on 26 September 2026:
+
+| App | Reads from Health Connect |
+|---|---|
+| Google Health (the Fitbit app's successor) | Weight, body fat, blood glucose, exercise and nutrition; blood pressure is not in its list |
+| Samsung Health | Says both directions and confirmed weight and body fat from a Withings scale through Health Connect in May 2026; community reports say body composition does not always come through, and blood pressure from third parties is unverified |
+| Garmin Connect | Does not read weight from Health Connect |
+
+The protocol is documented in [webhook.md](webhook.md#inbound-what-the-integration-may-answer). The next phase adds blood glucose, body temperature, oxygen saturation and single heart rate readings over the same channel; a generic inbound URL and an MQTT command topic, for setups without the integration, come only on request.
 
 ## Data resolution
 

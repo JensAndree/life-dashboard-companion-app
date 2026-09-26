@@ -48,7 +48,9 @@ class WebhookSchemaTest {
 
         val reconciliationKeys = listOf(
             "sequence", "deleted_records", "deletions_unavailable",
-            "backfill", "window_start", "window_end", "window_complete"
+            "backfill", "window_start", "window_end", "window_complete",
+            // What the phone can write and what it did with the last answer (Receive, 1.20.0).
+            "writeback"
         )
 
         val missing = reconciliationKeys.filter { it !in declaredKeys }

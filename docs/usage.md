@@ -84,6 +84,24 @@ the secret.
 Without the app installed, the code opens a page that explains where to get it. The secret
 travels in the part of the link after the `#`, which a browser never sends to any server.
 
+### Receiving measurements from Home Assistant
+
+The way back, for a scale or a blood pressure monitor that talks to Home Assistant and not to
+the phone (integration 0.7.0 or later):
+
+1. In Home Assistant, open the integration's options for this phone and pick the entities:
+   one per type, and for blood pressure the systolic and diastolic pair.
+2. In the app, on the Health tab, open **Receive** and switch it on. It takes the paired
+   webhook as its source, or asks which when there are several.
+3. Switch on the types you want. Each asks Health Connect for that one write permission; a
+   refused permission leaves the switch off.
+4. Tap **Sync Now**. The line under it says how much was written, the Logs tab shows every
+   reading, and the Receive row counts what was written today.
+
+Measurements keep the time they were taken, so a weigh-in at 07:00 that syncs at 09:00 is
+07:00 in Health Connect. Anything older than 30 days is refused unless **Accept older
+measurements** is on, which is what the integration's **Send history to phone** button needs.
+
 ### MQTT
 
 The MQTT route needs no YAML and no server-side setup beyond a broker Home Assistant already talks to.
@@ -91,6 +109,8 @@ The MQTT route needs no YAML and no server-side setup beyond a broker Home Assis
 1. In Home Assistant, install the **Mosquitto broker** add-on (Settings > Add-ons) and add the **MQTT** integration if it is not there yet. Create a user for the app under Settings > People, or in the add-on's login list; a dedicated account keeps the app's credentials out of your own.
 2. In the app, open the Health tab, expand **MQTT**, switch on **Enable MQTT publishing** and fill in the broker host (the Home Assistant IP on your LAN, or its hostname), port 1883 and that username and password. Screen Time shares the broker by default.
 3. Tap **Sync Now**. Within a few seconds Settings > Devices & services > MQTT lists a device named **Life Dashboard Companion** with a sensor for every synced type that has a value: 24 of the 33 Health Connect types (today's steps, distance and calories, the latest heart rate, weight, sleep duration, blood pressure and the other measurements) plus screen time. Workouts, meals, mindfulness sessions and cycle tracking are events and stay webhook-only.
+
+Two phones on the same broker? Give each one a name under **Advanced > Phone name**. A named phone becomes its own device, **Life Dashboard Companion (Pixel 8)**, with its own topics under the base topic; a phone without a name keeps publishing exactly as before, so nothing changes for a household with one phone.
 
 Values are published retained, so they survive a Home Assistant restart, and every sync republishes the full set the app has mapped so far. The sensors carry `state_class`, so they show up in the Statistics graphs and in the energy-style history cards. If nothing appears, the Logs tab shows every publish with the broker's answer; `NOT_AUTHORIZED` means the username or password is wrong, and the broker's own log names the client as `lifedashboard-` followed by eight random characters.
 
@@ -152,6 +172,43 @@ Watch apps such as Fitbit write the night's results to Health Connect only when 
 ### A nutrient or other field is missing from the export
 
 The app exports every field Health Connect's record types expose, but only when the source app wrote it. Cronometer, for example, does not write thiamin, folic acid, chloride or energy from fat, and Health Sync drops vitamins and minerals from mirrored meals. Salt is not a Health Connect field at all. [DATA_SOURCES.md](DATA_SOURCES.md) lists what is known per source app.
+
+### A measurement from Home Assistant is not in Samsung Health
+
+Check the Logs tab first: a row "Health · from Home Assistant" with **Written** means the
+reading is in Health Connect, and the Health Connect app lists it under the type with Life
+Dashboard as its source. From there on it is up to the other app. Samsung Health reads
+weight and body fat from Health Connect; whether it shows body composition or blood pressure
+written by a third app varies by version and is not something this app can promise. Google
+Health reads weight and body fat but not blood pressure; Garmin Connect reads no weight at
+all. [features.md](features.md#receiving-from-home-assistant) has the dated table.
+
+A row with **Failed** names the reason per reading: `permission_denied` means the type's
+write permission is missing (switch the type off and on to ask again), `too_old` means the
+reading is older than 30 days and **Accept older measurements** is off, `out_of_range`
+means the value is outside what the app accepts, and `hc_unavailable` or `rate_limited` mean
+Health Connect did not take it this time and the integration will offer it again.
+
+### Weight appears twice
+
+The scale's own app (Zepp, Mi Fitness, Withings) writes to Health Connect itself, and now
+Home Assistant does too. The app warns about this when a type is switched on. Pick one
+source: switch the type off under Receive, or stop the other app from writing to Health
+Connect in its own settings.
+
+### Yesterday's weigh-in shows up today
+
+It does not: a reading carries the time it was measured, and Health Connect shows it there.
+What moves is the sync, which brings it over later, and the Logs tab shows both the
+measurement time and the round that wrote it. If a reading really lands at the wrong time,
+the entity in Home Assistant has no timestamp of its own and the integration used the
+moment its state last changed; a timestamp entity in the integration's options fixes that.
+
+### "Update the Life Dashboard integration to receive measurements"
+
+The Receive row says this when the paired Home Assistant answers without the protocol block,
+which is what the integration does before 0.7.0. Update it through HACS; nothing on the
+phone needs to change. Sending to Home Assistant works as before in the meantime.
 
 ### Screen time is much higher than Digital Wellbeing
 
