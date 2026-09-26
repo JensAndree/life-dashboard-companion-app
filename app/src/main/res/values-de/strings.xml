@@ -71,6 +71,10 @@
     <string name="receive_no_types_yet">Die nächste Synchronisierung fragt Home Assistant, welche Typen es anbietet.</string>
     <string name="receive_choose_type">Schalte unten einen Typ ein, um ihn zu empfangen.</string>
     <string name="receive_permission_missing">Schreibberechtigung fehlt: %1$s</string>
+    <string name="receive_summary_needs_pairing">Kopplung mit Home Assistant nötig</string>
+    <string name="receive_summary_update_integration">Aktualisiere die Integration</string>
+    <string name="receive_summary_nothing_mapped">Keine Typen in Home Assistant zugeordnet</string>
+    <string name="receive_nothing_mapped">Home Assistant bietet für dieses Telefon noch keine Typen an: wähle Entitäten in den Optionen der Integration.</string>
     <string name="receive_types_chosen_in_ha">Welche Entitäten gesendet werden, wählst du in Home Assistant in den Optionen der Integration.</string>
     <string name="receive_older_measurements">Ältere Messwerte annehmen</string>
     <string name="receive_older_measurements_description">Auch Messwerte schreiben, die älter als 30 Tage sind, für einen aus Home Assistant gesendeten Verlauf.</string>

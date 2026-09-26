@@ -105,6 +105,8 @@ data class ReceiveSettings(
 data class ReceiveStatus(
     /** The type keys the integration has a mapping for; empty until the first response. */
     val configured: List<String> = emptyList(),
+    /** True once the integration answered at all; tells "nothing mapped" from "not asked yet". */
+    val answered: Boolean = false,
     /** True when the source URL answered without the protocol block: the integration is too old. */
     val integrationOutdated: Boolean = false,
     val writtenToday: Int = 0
@@ -118,8 +120,17 @@ data class ReceiveStatus(
 sealed interface ReceiveSummary {
     data object Off : ReceiveSummary
 
+    /** On, but the saved section lost its secret or its integration URL: nothing can arrive. */
+    data object NeedsPairing : ReceiveSummary
+
+    /** The source URL answered without the protocol block: the integration is too old. */
+    data object IntegrationOutdated : ReceiveSummary
+
     /** On, but no answer from the integration has named its types yet. */
     data object AwaitingTypes : ReceiveSummary
+
+    /** The integration answered, with nothing mapped for this phone. */
+    data object NothingMapped : ReceiveSummary
 
     /** The integration's types are known; none is switched on here yet. */
     data object ChooseType : ReceiveSummary
@@ -130,10 +141,16 @@ sealed interface ReceiveSummary {
     data class Receiving(val types: List<WriteBackType>, val writtenToday: Int) : ReceiveSummary
 
     companion object {
-        fun of(receive: ReceiveSettings, status: ReceiveStatus, granted: Set<String>): ReceiveSummary {
+        /**
+         * [available] is whether the saved section still has a secret and an integration URL
+         * (HealthUiState.receiveAvailable); the sync needs both, so the summary does too.
+         */
+        fun of(receive: ReceiveSettings, status: ReceiveStatus, granted: Set<String>, available: Boolean): ReceiveSummary {
             if (!receive.enabled || receive.sourceUrl == null) return Off
+            if (!available) return NeedsPairing
+            if (status.integrationOutdated) return IntegrationOutdated
             val offered = status.configured.mapNotNull { WriteBackType.fromKey(it) }
-            if (offered.isEmpty()) return AwaitingTypes
+            if (offered.isEmpty()) return if (status.answered) NothingMapped else AwaitingTypes
             val chosen = WriteBackType.entries.filter { it in receive.types && it in offered }
             val working = chosen.filter { it.writePermission in granted }
             return when {

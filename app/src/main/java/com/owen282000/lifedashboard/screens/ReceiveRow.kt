@@ -52,9 +52,13 @@ fun ReceiveRow(
     onScanRequested: () -> Unit
 ) {
     val active = receive.enabled && receive.sourceUrl != null
-    val subtitle = when (val summary = ReceiveSummary.of(receive, status, grantedPermissions)) {
+    val summary = ReceiveSummary.of(receive, status, grantedPermissions, available)
+    val subtitle = when (summary) {
         ReceiveSummary.Off -> stringResource(R.string.receive_off)
+        ReceiveSummary.NeedsPairing -> stringResource(R.string.receive_summary_needs_pairing)
+        ReceiveSummary.IntegrationOutdated -> stringResource(R.string.receive_summary_update_integration)
         ReceiveSummary.AwaitingTypes -> stringResource(R.string.receive_no_types_yet)
+        ReceiveSummary.NothingMapped -> stringResource(R.string.receive_summary_nothing_mapped)
         ReceiveSummary.ChooseType -> stringResource(R.string.receive_choose_type)
         is ReceiveSummary.PermissionMissing -> stringResource(
             R.string.receive_permission_missing,
@@ -78,7 +82,8 @@ fun ReceiveRow(
         accent = accent,
         title = stringResource(R.string.receive_title),
         subtitle = subtitle,
-        subtitleAccent = active,
+        // The accent is for measurements actually arriving; every other state is a note.
+        subtitleAccent = summary is ReceiveSummary.Receiving,
         expanded = expanded,
         onToggle = onToggle
     ) {
@@ -94,9 +99,10 @@ fun ReceiveRow(
             accent,
             onEnabledChange
         )
-        if (!active) {
+        if (!active || !available) {
             // Only without a usable source is pairing the next step; a paired phone just
-            // needs the switch above.
+            // needs the switch above. Switched on with the secret or the URL gone since,
+            // the same prompt explains why nothing arrives.
             if (!available) {
                 Text(
                     stringResource(R.string.receive_needs_integration),
@@ -128,7 +134,7 @@ fun ReceiveRow(
         val offered = status.configured.mapNotNull { WriteBackType.fromKey(it) }
         if (offered.isEmpty()) {
             Text(
-                stringResource(R.string.receive_no_types_yet),
+                stringResource(if (status.answered) R.string.receive_nothing_mapped else R.string.receive_no_types_yet),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -71,6 +71,10 @@
     <string name="receive_no_types_yet">De volgende synchronisatie vraagt Home Assistant welke types het aanbiedt.</string>
     <string name="receive_choose_type">Zet hieronder een type aan om het te ontvangen.</string>
     <string name="receive_permission_missing">Schrijftoestemming ontbreekt: %1$s</string>
+    <string name="receive_summary_needs_pairing">Koppeling met Home Assistant nodig</string>
+    <string name="receive_summary_update_integration">Werk de integratie bij</string>
+    <string name="receive_summary_nothing_mapped">Geen types gekoppeld in Home Assistant</string>
+    <string name="receive_nothing_mapped">Home Assistant biedt nog geen types aan voor deze telefoon: kies entiteiten bij de opties van de integratie.</string>
     <string name="receive_types_chosen_in_ha">Welke entiteiten worden verstuurd, kies je in Home Assistant, bij de opties van de integratie.</string>
     <string name="receive_older_measurements">Oudere metingen accepteren</string>
     <string name="receive_older_measurements_description">Schrijf ook metingen ouder dan 30 dagen, voor een geschiedenis die vanuit Home Assistant wordt gestuurd.</string>

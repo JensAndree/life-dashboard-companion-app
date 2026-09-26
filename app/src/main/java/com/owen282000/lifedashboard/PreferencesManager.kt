@@ -505,7 +505,7 @@ class PreferencesManager(context: Context) {
             // switched off and on again still offers the types it named.
             if (changed) {
                 putBoolean(KEY_RECEIVE_OUTDATED, false)
-                putString(KEY_RECEIVE_CONFIGURED, "")
+                remove(KEY_RECEIVE_CONFIGURED)
             }
         }
         if (changed) clearWriteBackState()
@@ -513,6 +513,9 @@ class PreferencesManager(context: Context) {
 
     fun getReceiveStatus(): ReceiveStatus = ReceiveStatus(
         configured = (prefs.getString(KEY_RECEIVE_CONFIGURED, "") ?: "").split(",").filter { it.isNotBlank() },
+        // The key is written by every answer the integration gives, even an empty one, and
+        // removed when the source changes; its presence is "the integration has answered".
+        answered = prefs.contains(KEY_RECEIVE_CONFIGURED),
         integrationOutdated = prefs.getBoolean(KEY_RECEIVE_OUTDATED, false),
         writtenToday = SyncStatusStore.writtenToday(appContext)
     )
