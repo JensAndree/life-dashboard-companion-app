@@ -37,6 +37,7 @@ The tag fails to release when `version.properties` or the store changelog does n
 | Path | Contents |
 |---|---|
 | `app/` | The Android app module: Compose UI, sync workers, webhook and MQTT delivery |
+| `hc-fixture/` | A debug-only second Health Connect app: the week seeder and a foreign data source for the tests |
 | `docs/` | Documentation, screenshots and the payload JSON Schema |
 | `fastlane/metadata/` | Play Store listing text and screenshots |
 | `.github/workflows/` | Build, release, CodeQL, security and Scorecard workflows |
@@ -77,17 +78,17 @@ Small, focused PRs are much easier to review than big ones. When in doubt, open 
 
 Two pieces of tooling make an emulator behave like a phone with a year of history and a Home Assistant next to it.
 
-**Seeded Health Connect data.** Debug builds declare write permissions for the eight essential types plus mindfulness (`app/src/debug/AndroidManifest.xml`, never in a release), and the instrumentation class `SeedHealthConnect` inserts a deterministic week: hourly steps, distance and active calories, daily total calories, a heart rate sample every ten minutes, resting heart rate, weight, sleep with stages, and mindfulness sessions. Reruns update the same records. Install the debug APK and the test APK with adb, then:
+**Seeded Health Connect data, from another app.** The `:hc-fixture` module is a small debug-only app of its own (`com.owen282000.lifedashboard.fixture`, never released) that writes Health Connect records the way a watch or scale app would. Its instrumentation class `SeedWeek` inserts a deterministic week: hourly steps, distance and active calories, daily total calories, a heart rate sample every ten minutes, resting heart rate, weight, sleep with stages, and mindfulness sessions. Because the data comes from a different package, the app sees it exactly as it sees a real source: it is synced, and never mistaken for something the app wrote itself.
 
 ```bash
-./gradlew assembleDebug assembleDebugAndroidTest
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell am instrument -w -e class com.owen282000.lifedashboard.SeedHealthConnect \
-  com.owen282000.lifedashboard.test/androidx.test.runner.AndroidJUnitRunner
+./gradlew :hc-fixture:assembleDebug :hc-fixture:assembleDebugAndroidTest
+adb install -r -t hc-fixture/build/outputs/apk/debug/hc-fixture-debug.apk
+adb install -r -t hc-fixture/build/outputs/apk/androidTest/debug/hc-fixture-debug-androidTest.apk
+adb shell am instrument -w --no-hidden-api-checks -e class com.owen282000.lifedashboard.fixture.SeedWeek \
+  com.owen282000.lifedashboard.fixture.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The first run opens Health Connect's permission dialog on the device; accept it there. Do not grant the permissions with `adb shell pm grant`: inserts then succeed, but the app is never registered as a data source, and only data sources count in aggregates, so the daily totals (and the app's "today" sensors) stay empty. `connectedDebugAndroidTest` reinstalls the app and drops the grants, which is why the command above uses `am instrument` directly.
+Reruns update the same records: each carries a client record id per day and slot. The fixture grants itself its permissions through the same hidden call Health Connect's own dialog uses (hence `--no-hidden-api-checks`), which also registers it as a data source, so its records count in aggregates and the daily totals are real; without the flag it falls back to accepting the dialog. `adb shell pm grant` is not enough: inserts succeed, but the app is never registered as a data source, and the daily totals stay empty. `ClearFixtureData` in the same module deletes everything the fixture wrote (Health Connect keeps an uninstalled app's data). Never seed the AVD of the instrumented tests.
 
 **Broker and Home Assistant in Docker.** `scripts/dev/docker-compose.yml` starts a Mosquitto broker without authentication on port 1883 and a Home Assistant on port 8123, with its configuration under `scripts/dev/ha-config/` (ignored by git). Point the app at `10.0.2.2` from an emulator, or at the laptop's LAN address from a phone, and the device appears under Settings > Devices & services > MQTT after the first sync.
 

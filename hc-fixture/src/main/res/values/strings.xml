@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LD Health Fixture</string>
+    <string name="fixture_explanation">A test data source for Life Dashboard Companion. It writes generated Health Connect records during development and in the instrumented tests, and reads nothing.</string>
+</resources>

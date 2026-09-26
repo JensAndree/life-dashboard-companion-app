@@ -21,3 +21,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Life Dashboard Companion"
 include(":app")
+// A second Health Connect data source, debug only: the seeder and the instrumented suite.
+include(":hc-fixture")
