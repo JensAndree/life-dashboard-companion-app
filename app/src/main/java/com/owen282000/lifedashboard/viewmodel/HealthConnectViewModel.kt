@@ -34,6 +34,8 @@ data class HealthUiState(
     val allowHttpWebhooks: Boolean = false,
     /** KeyChain alias of the client certificate (mTLS) presented to webhooks, null for none. */
     val clientCertAlias: String? = null,
+    /** The phone's name for MQTT, shared with the Screen Time tab; null when it has none. */
+    val phoneName: String? = null,
     val failureNotificationsEnabled: Boolean = false,
     val failureThreshold: Int = 3,
     val secretsUnavailable: Boolean = false,
@@ -72,6 +74,7 @@ interface HealthActions {
     fun setIncludeDailyTotals(enabled: Boolean)
     fun setAllowHttpWebhooks(enabled: Boolean)
     fun setClientCertAlias(alias: String?)
+    fun setPhoneName(name: String)
     fun setFailureNotifications(enabled: Boolean)
     fun setFailureThreshold(threshold: Int)
     fun save()
@@ -110,6 +113,7 @@ class HealthConnectViewModel(
                 includeDailyTotals = settings.includeDailyTotals(),
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
                 clientCertAlias = settings.clientCertAlias(),
+                phoneName = settings.phoneName(),
                 failureNotificationsEnabled = settings.failureNotificationsEnabled(),
                 failureThreshold = settings.failureThreshold(),
                 secretsUnavailable = settings.secretsUnavailable,
@@ -138,7 +142,11 @@ class HealthConnectViewModel(
      */
     fun refreshSharedSettings() {
         _state.update {
-            it.copy(allowHttpWebhooks = settings.allowHttpWebhooks(), clientCertAlias = settings.clientCertAlias())
+            it.copy(
+                allowHttpWebhooks = settings.allowHttpWebhooks(),
+                clientCertAlias = settings.clientCertAlias(),
+                phoneName = settings.phoneName()
+            )
         }
     }
 
@@ -223,6 +231,12 @@ class HealthConnectViewModel(
         _state.update { it.copy(clientCertAlias = alias) }
     }
 
+    /** Applies at once, like the other shared settings under Advanced; the field shows what is typed, the store keeps it trimmed. */
+    override fun setPhoneName(name: String) {
+        settings.setPhoneName(name)
+        _state.update { it.copy(phoneName = name) }
+    }
+
     override fun setFailureNotifications(enabled: Boolean) {
         settings.setFailureNotificationsEnabled(enabled)
         _state.update { it.copy(failureNotificationsEnabled = enabled) }
@@ -260,7 +274,8 @@ class HealthConnectViewModel(
                 draft = saved,
                 includeDailyTotals = settings.includeDailyTotals(),
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
-                clientCertAlias = settings.clientCertAlias()
+                clientCertAlias = settings.clientCertAlias(),
+                phoneName = settings.phoneName()
             )
         }
     }

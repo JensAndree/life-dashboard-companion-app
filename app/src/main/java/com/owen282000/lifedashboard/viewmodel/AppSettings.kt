@@ -28,6 +28,10 @@ interface AppSettings {
     fun setAllowHttpWebhooks(enabled: Boolean)
     fun clientCertAlias(): String?
     fun setClientCertAlias(alias: String?)
+
+    /** The phone's name for MQTT, shared by both tabs; null when it has none. */
+    fun phoneName(): String?
+    fun setPhoneName(name: String?)
     fun failureNotificationsEnabled(): Boolean
     fun setFailureNotificationsEnabled(enabled: Boolean)
     fun failureThreshold(): Int
@@ -99,6 +103,8 @@ class PreferencesAppSettings(
     override fun setAllowHttpWebhooks(enabled: Boolean) = prefs.setAllowHttpWebhooks(enabled)
     override fun clientCertAlias() = prefs.clientCertAlias()
     override fun setClientCertAlias(alias: String?) = prefs.setClientCertAlias(alias)
+    override fun phoneName() = prefs.getPhoneName()
+    override fun setPhoneName(name: String?) = prefs.setPhoneName(name)
     override fun failureNotificationsEnabled() = SyncFailureNotifier.isEnabled(context)
     override fun setFailureNotificationsEnabled(enabled: Boolean) = SyncFailureNotifier.setEnabled(context, enabled)
     override fun failureThreshold() = SyncFailureNotifier.getThreshold(context)

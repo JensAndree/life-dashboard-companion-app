@@ -59,7 +59,8 @@ class ConfigBackupManager(private val context: Context) {
                 seriesResolutions = prefs.getSeriesResolutions()
                     .filterValues { it != DEFAULT_RESOLUTION }
                     .entries.sortedBy { it.key.name }
-                    .associate { it.key.name to it.value.name }
+                    .associate { it.key.name to it.value.name },
+                phoneName = prefs.getPhoneName()
             )
         )
     }
@@ -117,6 +118,7 @@ class ConfigBackupManager(private val context: Context) {
             prefs.setScreenTimeDayBoundaryHour(screenTimeDayBoundaryHour)
             prefs.setUseScreenTimeDayBoundary(screenTimeUseDayBoundary)
             failureNotificationThreshold?.let { SyncFailureNotifier.setThreshold(context, it) }
+            prefs.setPhoneName(phoneName)
             // Null means a backup from before resolutions existed: leave the setting alone.
             seriesResolutions?.let { stored ->
                 prefs.setSeriesResolutions(

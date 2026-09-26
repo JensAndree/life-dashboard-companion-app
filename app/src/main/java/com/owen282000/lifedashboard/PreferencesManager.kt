@@ -2,6 +2,7 @@ package com.owen282000.lifedashboard
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.serialization.encodeToString
@@ -149,6 +150,9 @@ class PreferencesManager(context: Context) {
         private const val KEY_INCLUDE_DAILY_TOTALS = "include_daily_totals"
         private const val KEY_ALLOW_HTTP_WEBHOOKS = "allow_http_webhooks"
         private const val KEY_CLIENT_CERT_ALIAS = "client_cert_alias"
+
+        /** The phone's name for MQTT, shared by both sections; empty means the topics stay as they always were. */
+        private const val KEY_PHONE_NAME = "phone_name"
 
         /** Shared MQTT broker keys: mqtt_host, mqtt_port, mqtt_tls, mqtt_username, mqtt_password (securePrefs). */
         private const val SHARED_MQTT_PREFIX = "mqtt_"
@@ -407,6 +411,18 @@ class PreferencesManager(context: Context) {
 
     fun setIncludeDailyTotals(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_INCLUDE_DAILY_TOTALS, enabled).apply()
+    }
+
+    /**
+     * The phone's name, which becomes part of the MQTT device id and topics so two phones can
+     * share one broker. Null when the user never set one: everything then publishes exactly as
+     * it did before the setting existed.
+     */
+    fun getPhoneName(): String? = prefs.getString(KEY_PHONE_NAME, null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun setPhoneName(name: String?) {
+        val trimmed = name?.trim().orEmpty()
+        prefs.edit { if (trimmed.isEmpty()) remove(KEY_PHONE_NAME) else putString(KEY_PHONE_NAME, trimmed) }
     }
 
     fun getHealthWebhookSecret(): String? {

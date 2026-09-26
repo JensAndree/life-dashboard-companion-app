@@ -21,6 +21,7 @@ internal class FakeAppSettings(
     var dailyTotals = true
     var allowHttp = false
     var certAlias: String? = null
+    var storedPhoneName: String? = null
     var notifications = true
     var threshold = 3
     override var secretsUnavailable = false
@@ -47,6 +48,8 @@ internal class FakeAppSettings(
     override fun setAllowHttpWebhooks(enabled: Boolean) { allowHttp = enabled }
     override fun clientCertAlias() = certAlias
     override fun setClientCertAlias(alias: String?) { certAlias = alias }
+    override fun phoneName() = storedPhoneName
+    override fun setPhoneName(name: String?) { storedPhoneName = name?.trim()?.takeIf { it.isNotEmpty() } }
     override fun failureNotificationsEnabled() = notifications
     override fun setFailureNotificationsEnabled(enabled: Boolean) { notifications = enabled }
     override fun failureThreshold() = threshold

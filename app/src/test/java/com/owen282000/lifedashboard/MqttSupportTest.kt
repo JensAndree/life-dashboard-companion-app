@@ -211,6 +211,53 @@ class MqttSupportTest {
         assertFalse(topApp.contains("suggested_display_precision"))
     }
 
+    // Phone name (issue #62, phase 1): two phones on one broker
+
+    @Test
+    fun `without a phone name every topic and id is exactly what it always was`() {
+        assertNull(MqttSupport.phoneSlug(null))
+        assertNull(MqttSupport.phoneSlug("   "))
+        assertEquals("lifedashboard/weight/state", MqttSupport.stateTopic("lifedashboard", "weight", null))
+        assertEquals("lifedashboard/weight/attributes", MqttSupport.attributesTopic("lifedashboard", "weight", null))
+        assertEquals("homeassistant/sensor/life_dashboard_companion_weight/config", MqttSupport.discoveryTopic("homeassistant", "weight", null))
+        assertEquals("life_dashboard_companion", MqttSupport.deviceId(null))
+        assertEquals("Life Dashboard Companion", MqttSupport.deviceName(null))
+        val json = MqttSupport.discoveryConfigJson(MqttSensor("weight", "Weight", "80.5", "kg"), "lifedashboard", "1.20.0", phoneName = null)
+        assertTrue(json.contains("\"unique_id\":\"life_dashboard_companion_weight\""))
+        assertTrue(json.contains("\"identifiers\":[\"life_dashboard_companion\"]"))
+        assertTrue(json.contains("\"name\":\"Life Dashboard Companion\""))
+    }
+
+    @Test
+    fun `a phone name becomes a slug of lower case letters, digits and underscores`() {
+        assertEquals("pixel_8", MqttSupport.phoneSlug("Pixel 8"))
+        assertEquals("zoe_s_phone", MqttSupport.phoneSlug("  Zoë's phone  "))
+        assertEquals("owen_phone", MqttSupport.phoneSlug("Owen--Phone!"))
+        assertEquals("a_b", MqttSupport.phoneSlug("a_b"))
+        assertNull("a name with nothing usable in it is no name", MqttSupport.phoneSlug("!!!"))
+    }
+
+    @Test
+    fun `with a phone name the topics, the ids and the device carry it`() {
+        val slug = MqttSupport.phoneSlug("Pixel 8")
+        assertEquals("lifedashboard/pixel_8/weight/state", MqttSupport.stateTopic("lifedashboard", "weight", slug))
+        assertEquals("lifedashboard/pixel_8/weight/attributes", MqttSupport.attributesTopic("lifedashboard", "weight", slug))
+        assertEquals("homeassistant/sensor/life_dashboard_companion_pixel_8_weight/config", MqttSupport.discoveryTopic("homeassistant", "weight", slug))
+        assertEquals("life_dashboard_companion_pixel_8", MqttSupport.deviceId(slug))
+        assertEquals("Life Dashboard Companion (Pixel 8)", MqttSupport.deviceName("Pixel 8"))
+
+        val json = MqttSupport.discoveryConfigJson(MqttSensor("weight", "Weight", "80.5", "kg"), "lifedashboard", "1.20.0", phoneName = "Pixel 8")
+        for (expected in listOf(
+            "\"unique_id\":\"life_dashboard_companion_pixel_8_weight\"",
+            "\"state_topic\":\"lifedashboard/pixel_8/weight/state\"",
+            "\"json_attributes_topic\":\"lifedashboard/pixel_8/weight/attributes\"",
+            "\"identifiers\":[\"life_dashboard_companion_pixel_8\"]",
+            "\"name\":\"Life Dashboard Companion (Pixel 8)\""
+        )) {
+            assertTrue("missing $expected in $json", expected in json)
+        }
+    }
+
     @Test
     fun `numeric states are rounded to sensible decimals`() {
         assertEquals("78.2", MqttSupport.num(78.2006048685296))

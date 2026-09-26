@@ -248,7 +248,8 @@ fun HealthConnectContent(
                 subtitle = listOfNotNull(
                     if (state.includeDailyTotals) stringResource(R.string.health_daily_totals) else stringResource(R.string.health_no_daily_totals),
                     if (state.allowHttpWebhooks) stringResource(R.string.sync_advanced_plain_http_allowed) else stringResource(R.string.sync_advanced_https_only),
-                    if (state.clientCertAlias != null) stringResource(R.string.sync_advanced_client_cert) else null
+                    if (state.clientCertAlias != null) stringResource(R.string.sync_advanced_client_cert) else null,
+                    state.phoneName?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.sync_advanced_phone_name, it.trim()) }
                 ).joinToString(", "),
                 expanded = advancedExpanded,
                 onToggle = { advancedExpanded = !advancedExpanded }
@@ -273,6 +274,7 @@ fun HealthConnectContent(
                     accent = accent,
                     onAliasChange = actions::setClientCertAlias
                 )
+                PhoneNameLine(name = state.phoneName.orEmpty(), accent = accent, onChange = actions::setPhoneName)
             }
             GroupDivider()
             NotificationsRow(

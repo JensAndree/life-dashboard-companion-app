@@ -47,6 +47,10 @@
     <string name="sync_advanced_client_cert">Clientcertificaat</string>
     <string name="sync_advanced_https_only">Alleen HTTPS</string>
     <string name="sync_advanced_plain_http_allowed">Plain HTTP toegestaan</string>
+    <string name="sync_advanced_phone_name">Telefoon %1$s</string>
+    <string name="phone_name_title">Telefoonnaam</string>
+    <string name="phone_name_description">Voor een tweede telefoon op dezelfde MQTT-broker. Leeg laat het apparaat en de topics zoals ze zijn; een naam geeft deze telefoon een eigen apparaat en eigen topics onder het basistopic.</string>
+    <string name="phone_name_placeholder">Optioneel</string>
     <string name="sync_advanced_title">Geavanceerd</string>
     <string name="sync_data_preview_title">Voorbeeld van data</string>
     <string name="sync_export_data">Data exporteren</string>

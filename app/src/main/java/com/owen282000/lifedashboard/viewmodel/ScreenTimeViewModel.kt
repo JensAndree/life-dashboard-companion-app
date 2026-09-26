@@ -26,6 +26,8 @@ data class ScreenTimeUiState(
     val allowHttpWebhooks: Boolean = false,
     /** KeyChain alias of the client certificate (mTLS) presented to webhooks, null for none. */
     val clientCertAlias: String? = null,
+    /** The phone's name for MQTT, shared with the Health Connect tab; null when it has none. */
+    val phoneName: String? = null,
     val failureNotificationsEnabled: Boolean = false,
     val failureThreshold: Int = 3,
     val secretsUnavailable: Boolean = false,
@@ -57,6 +59,7 @@ interface ScreenTimeActions {
     fun setMqtt(mqtt: MqttDraft)
     fun setAllowHttpWebhooks(enabled: Boolean)
     fun setClientCertAlias(alias: String?)
+    fun setPhoneName(name: String)
     fun setFailureNotifications(enabled: Boolean)
     fun setFailureThreshold(threshold: Int)
     fun save()
@@ -84,6 +87,7 @@ class ScreenTimeViewModel(
                 hasUsageAccess = ops.hasUsageAccess(),
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
                 clientCertAlias = settings.clientCertAlias(),
+                phoneName = settings.phoneName(),
                 failureNotificationsEnabled = settings.failureNotificationsEnabled(),
                 failureThreshold = settings.failureThreshold(),
                 secretsUnavailable = settings.secretsUnavailable,
@@ -112,7 +116,11 @@ class ScreenTimeViewModel(
     /** See HealthConnectViewModel.refreshSharedSettings: the two settings both tabs show. */
     fun refreshSharedSettings() {
         _state.update {
-            it.copy(allowHttpWebhooks = settings.allowHttpWebhooks(), clientCertAlias = settings.clientCertAlias())
+            it.copy(
+                allowHttpWebhooks = settings.allowHttpWebhooks(),
+                clientCertAlias = settings.clientCertAlias(),
+                phoneName = settings.phoneName()
+            )
         }
     }
 
@@ -158,6 +166,11 @@ class ScreenTimeViewModel(
         _state.update { it.copy(clientCertAlias = alias) }
     }
 
+    override fun setPhoneName(name: String) {
+        settings.setPhoneName(name)
+        _state.update { it.copy(phoneName = name) }
+    }
+
     override fun setFailureNotifications(enabled: Boolean) {
         settings.setFailureNotificationsEnabled(enabled)
         _state.update { it.copy(failureNotificationsEnabled = enabled) }
@@ -195,7 +208,8 @@ class ScreenTimeViewModel(
                 saved = saved,
                 draft = saved,
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
-                clientCertAlias = settings.clientCertAlias()
+                clientCertAlias = settings.clientCertAlias(),
+                phoneName = settings.phoneName()
             )
         }
     }

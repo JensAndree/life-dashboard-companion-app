@@ -32,14 +32,45 @@ object MqttSupport {
     const val DEFAULT_BASE_TOPIC = "lifedashboard"
     const val DEFAULT_DISCOVERY_PREFIX = "homeassistant"
     const val DEVICE_ID = "life_dashboard_companion"
+    const val DEVICE_NAME = "Life Dashboard Companion"
 
     /** Numeric states with a sensible number of decimals; raw doubles like 78.2006048685296 help nobody. */
     fun num(value: Double, decimals: Int = 1): String = String.format(java.util.Locale.ROOT, "%.${decimals}f", value)
 
-    fun stateTopic(baseTopic: String, key: String) = "$baseTopic/$key/state"
-    fun attributesTopic(baseTopic: String, key: String) = "$baseTopic/$key/attributes"
-    fun discoveryTopic(discoveryPrefix: String, key: String) =
-        "$discoveryPrefix/sensor/${DEVICE_ID}_$key/config"
+    /**
+     * The phone name as it appears in topics and ids: lower case letters, digits and
+     * underscores, nothing else. Accents are stripped rather than replaced, so "Zoë" is "zoe".
+     * Null for a blank name, which is the signal that this phone has no name and everything
+     * stays exactly as it was before names existed.
+     */
+    fun phoneSlug(name: String?): String? {
+        if (name.isNullOrBlank()) return null
+        val plain = java.text.Normalizer.normalize(name.trim(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+            .lowercase(java.util.Locale.ROOT)
+        return plain.replace(Regex("[^a-z0-9_]+"), "_").trim('_').ifEmpty { null }
+    }
+
+    /** The Home Assistant device id: the fixed one, or with the phone's slug behind it. */
+    fun deviceId(slug: String?): String = if (slug == null) DEVICE_ID else "${DEVICE_ID}_$slug"
+
+    /** The device name Home Assistant shows: with the phone's name in brackets when it has one. */
+    fun deviceName(phoneName: String?): String {
+        val name = phoneName?.trim().orEmpty()
+        return if (name.isEmpty()) DEVICE_NAME else "$DEVICE_NAME ($name)"
+    }
+
+    /**
+     * Topics carry the phone's slug between the base topic and the sensor key, so two phones on
+     * one broker never publish over each other. Without a slug they are the topics every
+     * receiver has been reading since 1.8.
+     */
+    fun stateTopic(baseTopic: String, key: String, slug: String? = null) =
+        if (slug == null) "$baseTopic/$key/state" else "$baseTopic/$slug/$key/state"
+    fun attributesTopic(baseTopic: String, key: String, slug: String? = null) =
+        if (slug == null) "$baseTopic/$key/attributes" else "$baseTopic/$slug/$key/attributes"
+    fun discoveryTopic(discoveryPrefix: String, key: String, slug: String? = null) =
+        "$discoveryPrefix/sensor/${deviceId(slug)}_$key/config"
 
     /**
      * Maps the latest record of each sensor-like data type to an MQTT sensor. Event-like types
@@ -214,13 +245,18 @@ object MqttSupport {
      */
     val RETIRED_SENSOR_KEYS: Set<String> = setOf("steps", "distance", "active_calories", "total_calories")
 
-    /** Home Assistant MQTT Discovery config payload for a sensor (published retained). */
-    fun discoveryConfigJson(sensor: MqttSensor, baseTopic: String, appVersion: String): String {
+    /**
+     * Home Assistant MQTT Discovery config payload for a sensor (published retained). With a
+     * [phoneName] the unique ids, the topics and the device all carry it, so a second phone
+     * becomes a second device instead of overwriting the first.
+     */
+    fun discoveryConfigJson(sensor: MqttSensor, baseTopic: String, appVersion: String, phoneName: String? = null): String {
+        val slug = phoneSlug(phoneName)
         return buildJsonObject {
             put("name", sensor.name)
-            put("unique_id", "${DEVICE_ID}_${sensor.key}")
-            put("state_topic", stateTopic(baseTopic, sensor.key))
-            put("json_attributes_topic", attributesTopic(baseTopic, sensor.key))
+            put("unique_id", "${deviceId(slug)}_${sensor.key}")
+            put("state_topic", stateTopic(baseTopic, sensor.key, slug))
+            put("json_attributes_topic", attributesTopic(baseTopic, sensor.key, slug))
             sensor.unit?.let { put("unit_of_measurement", it) }
             sensor.deviceClass?.let { put("device_class", it) }
             sensor.stateClass?.let { put("state_class", it) }
@@ -229,8 +265,8 @@ object MqttSupport {
             // already carries the decimals we want, so tell HA to show exactly those.
             displayPrecision(sensor.state)?.let { put("suggested_display_precision", it) }
             putJsonObject("device") {
-                putJsonArray("identifiers") { add(kotlinx.serialization.json.JsonPrimitive(DEVICE_ID)) }
-                put("name", "Life Dashboard Companion")
+                putJsonArray("identifiers") { add(kotlinx.serialization.json.JsonPrimitive(deviceId(slug))) }
+                put("name", deviceName(phoneName))
                 put("manufacturer", "owen282000")
                 put("model", "Android app")
                 put("sw_version", appVersion)

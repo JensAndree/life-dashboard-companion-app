@@ -73,7 +73,7 @@ class MqttPublisher(private val context: Context) {
             ?: emptyList()
         val sensors = MqttSupport.mergeSensors(cached, fresh)
         if (sensors.isNotEmpty()) preferencesManager.setMqttSensorCache(section, Json.encodeToString(sensors))
-        val result = publish(sensors, settings) { preferencesManager.setLastMqttStatus(section, it) }
+        val result = publish(sensors, settings, preferencesManager.getPhoneName()) { preferencesManager.setLastMqttStatus(section, it) }
         // The Logs tab lists MQTT publishes next to webhook deliveries, so a failing broker
         // shows up in the same place as a failing endpoint.
         if (settings.enabled && settings.host.isNotBlank() && sensors.isNotEmpty()) {
@@ -99,12 +99,15 @@ class MqttPublisher(private val context: Context) {
     private suspend fun publish(
         sensors: List<MqttSensor>,
         settings: MqttSettings,
+        /** The phone's name, which puts its slug in every topic and id; null keeps the topics as they were. */
+        phoneName: String?,
         setStatus: (String) -> Unit
     ): Result<Int> = withContext(Dispatchers.IO) {
         if (!settings.enabled || settings.host.isBlank()) {
             return@withContext Result.success(0)
         }
         if (sensors.isEmpty()) return@withContext Result.success(0)
+        val slug = MqttSupport.phoneSlug(phoneName)
 
         try {
             val clientBuilder = MqttClient.builder()
@@ -136,24 +139,24 @@ class MqttPublisher(private val context: Context) {
                 // entity makes Home Assistant log "Erroneous JSON", the config clear removes it.
                 for (key in MqttSupport.RETIRED_SENSOR_KEYS) {
                     for (topic in listOf(
-                        MqttSupport.stateTopic(settings.baseTopic, key),
-                        MqttSupport.attributesTopic(settings.baseTopic, key),
-                        MqttSupport.discoveryTopic(MqttSupport.DEFAULT_DISCOVERY_PREFIX, key)
+                        MqttSupport.stateTopic(settings.baseTopic, key, slug),
+                        MqttSupport.attributesTopic(settings.baseTopic, key, slug),
+                        MqttSupport.discoveryTopic(MqttSupport.DEFAULT_DISCOVERY_PREFIX, key, slug)
                     )) {
                         client.publishWith().topic(topic).payload(ByteArray(0)).qos(MqttQos.AT_LEAST_ONCE).retain(true).send()
                     }
                 }
                 for (sensor in sensors) {
                     client.publishWith()
-                        .topic(MqttSupport.discoveryTopic(MqttSupport.DEFAULT_DISCOVERY_PREFIX, sensor.key))
-                        .payload(MqttSupport.discoveryConfigJson(sensor, settings.baseTopic, appVersion).toByteArray(Charsets.UTF_8))
+                        .topic(MqttSupport.discoveryTopic(MqttSupport.DEFAULT_DISCOVERY_PREFIX, sensor.key, slug))
+                        .payload(MqttSupport.discoveryConfigJson(sensor, settings.baseTopic, appVersion, phoneName).toByteArray(Charsets.UTF_8))
                         .qos(MqttQos.AT_LEAST_ONCE).retain(true).send()
                     client.publishWith()
-                        .topic(MqttSupport.stateTopic(settings.baseTopic, sensor.key))
+                        .topic(MqttSupport.stateTopic(settings.baseTopic, sensor.key, slug))
                         .payload(sensor.state.toByteArray(Charsets.UTF_8))
                         .qos(MqttQos.AT_LEAST_ONCE).retain(true).send()
                     client.publishWith()
-                        .topic(MqttSupport.attributesTopic(settings.baseTopic, sensor.key))
+                        .topic(MqttSupport.attributesTopic(settings.baseTopic, sensor.key, slug))
                         .payload(MqttSupport.attributesJson(sensor).toByteArray(Charsets.UTF_8))
                         .qos(MqttQos.AT_LEAST_ONCE).retain(true).send()
                 }

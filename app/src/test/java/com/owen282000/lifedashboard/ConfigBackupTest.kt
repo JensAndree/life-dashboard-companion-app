@@ -50,7 +50,8 @@ class ConfigBackupTest {
             screenTimeDayBoundaryHour = 3,
             screenTimeUseDayBoundary = false,
             failureNotificationThreshold = 5,
-            seriesResolutions = mapOf("HEART_RATE" to "ONE_MINUTE", "STEPS" to "HOURLY")
+            seriesResolutions = mapOf("HEART_RATE" to "ONE_MINUTE", "STEPS" to "HOURLY"),
+            phoneName = "Pixel 8"
         )
     )
 
@@ -72,7 +73,7 @@ class ConfigBackupTest {
         listOf(
             "webhook_urls", "signing_secret", "sync_interval_minutes",
             "screen_time", "use_tls", "enabled_data_types", "include_daily_totals",
-            "allow_http_webhooks", "health_base_topic"
+            "allow_http_webhooks", "health_base_topic", "phone_name"
         ).forEach {
             assertTrue("expected key \"$it\" in export", json.contains("\"$it\""))
         }
@@ -216,5 +217,6 @@ class ConfigBackupTest {
         assertNull(restored.health.syncTimes)
         assertNull(restored.health.quietFrom)
         assertNull(restored.options.seriesResolutions)
+        assertNull(restored.options.phoneName)
     }
 }

@@ -238,6 +238,25 @@ class HealthConnectViewModelTest {
     }
 
     @Test
+    fun `the phone name applies at once, is shared with the other tab and is not an unsaved change`() {
+        val settings = FakeAppSettings()
+        val vm = vm(settings)
+        assertNull(vm.state.value.phoneName)
+
+        vm.setPhoneName("Pixel 8")
+        assertEquals("Pixel 8", settings.storedPhoneName)
+        assertEquals("Pixel 8", vm.state.value.phoneName)
+        assertFalse(vm.state.value.hasChanges)
+
+        // Cleared on this tab, then set on the other one: the reload picks it up.
+        vm.setPhoneName("")
+        assertNull(settings.storedPhoneName)
+        settings.storedPhoneName = "Zoë"
+        vm.refreshSharedSettings()
+        assertEquals("Zoë", vm.state.value.phoneName)
+    }
+
+    @Test
     fun `a client certificate picked on the other screen shows up after a reload`() {
         val settings = FakeAppSettings()
         val vm = vm(settings)

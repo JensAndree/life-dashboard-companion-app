@@ -454,6 +454,30 @@ fun MqttRow(
     }
 }
 
+/**
+ * The phone's name for MQTT (issue #62, phase 1). One setting for both tabs, applied as it
+ * is typed: with a name, this phone publishes under its own device and its own topics, so
+ * two phones can share one broker; without one, nothing changes.
+ */
+@Composable
+fun PhoneNameLine(name: String, accent: Color, onChange: (String) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.phone_name_title), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            stringResource(R.string.phone_name_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        FilledField(
+            value = name,
+            onValueChange = onChange,
+            accent = accent,
+            placeholder = stringResource(R.string.phone_name_placeholder)
+        )
+    }
+}
+
 /** Failure notifications are app-wide; the row appears on both tabs and edits the same setting. */
 @Composable
 fun NotificationsRow(

@@ -201,7 +201,8 @@ fun ScreenTimeContent(
                 title = stringResource(R.string.sync_advanced_title),
                 subtitle = listOfNotNull(
                     if (state.allowHttpWebhooks) stringResource(R.string.sync_advanced_plain_http_allowed) else stringResource(R.string.sync_advanced_https_only),
-                    if (state.clientCertAlias != null) stringResource(R.string.sync_advanced_client_cert) else null
+                    if (state.clientCertAlias != null) stringResource(R.string.sync_advanced_client_cert) else null,
+                    state.phoneName?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.sync_advanced_phone_name, it.trim()) }
                 ).joinToString(", "),
                 expanded = advancedExpanded,
                 onToggle = { advancedExpanded = !advancedExpanded }
@@ -219,6 +220,7 @@ fun ScreenTimeContent(
                     accent = accent,
                     onAliasChange = actions::setClientCertAlias
                 )
+                PhoneNameLine(name = state.phoneName.orEmpty(), accent = accent, onChange = actions::setPhoneName)
             }
             GroupDivider()
             NotificationsRow(

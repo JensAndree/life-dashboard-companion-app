@@ -163,5 +163,7 @@ data class OptionsConfig(
     @SerialName("screen_time_use_day_boundary") val screenTimeUseDayBoundary: Boolean = true,
     @SerialName("failure_notification_threshold") val failureNotificationThreshold: Int? = null,
     /** Type name to resolution name, only for types not at raw; absent in older backups. */
-    @SerialName("series_resolutions") val seriesResolutions: Map<String, String>? = null
+    @SerialName("series_resolutions") val seriesResolutions: Map<String, String>? = null,
+    /** The phone's name for MQTT (1.20.0); null or absent means no name. */
+    @SerialName("phone_name") val phoneName: String? = null
 )
