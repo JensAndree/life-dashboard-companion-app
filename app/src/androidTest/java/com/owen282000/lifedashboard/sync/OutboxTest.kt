@@ -12,6 +12,8 @@ import com.owen282000.lifedashboard.HealthDataType.WEIGHT
 import com.owen282000.lifedashboard.HealthSyncResult
 import com.owen282000.lifedashboard.LogType
 import com.owen282000.lifedashboard.PendingSyncStore
+import com.owen282000.lifedashboard.ScreenTimeSyncManager
+import com.owen282000.lifedashboard.SyncStatusStore
 import com.owen282000.lifedashboard.appPreferences
 import com.owen282000.lifedashboard.harness.AppStateRule
 import com.owen282000.lifedashboard.harness.Conservation
@@ -19,12 +21,17 @@ import com.owen282000.lifedashboard.harness.HcFixture
 import com.owen282000.lifedashboard.harness.HcFixture.Companion.ago
 import com.owen282000.lifedashboard.harness.Hmac
 import com.owen282000.lifedashboard.harness.Receiver
+import com.owen282000.lifedashboard.harness.ScreenTimeUse
 import com.owen282000.lifedashboard.harness.TestSetup
 import com.owen282000.lifedashboard.harness.Witness
+import com.owen282000.lifedashboard.harness.num
+import com.owen282000.lifedashboard.harness.str
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -109,5 +116,174 @@ class OutboxTest {
         newest.forEach { (type, millis) ->
             assertEquals("watermark of $type", millis, context.appPreferences().getHealthLastSyncTimestamp(type))
         }
+    }
+
+    /** T12. A 503 followed by a 200 within one sync: delivered, and the log says it recovered. */
+    @Test
+    fun recoveredOnRetryNote() = runBlocking {
+        TestSetup.health(receiver, setOf(STEPS))
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+        receiver.respond(TestSetup.HEALTH_PATH, 503, 200)
+
+        TestSetup.syncManager().performSync().getOrThrow()
+
+        assertEquals(2, receiver.exchanges.size)
+        val log = context.appPreferences().getWebhookLogs(LogType.HEALTH_CONNECT).single()
+        assertTrue(log.success)
+        assertEquals("Recovered on attempt 2 of 3", log.note)
+        assertEquals(0, PendingSyncStore.forContext(context).size())
+    }
+
+    /** How many requests one sync makes against a receiver that always answers [code]; checks the log text too. */
+    private fun attemptsFor(code: Int): Int = runBlocking {
+        AppStateRule.reset()
+        TestSetup.health(receiver, setOf(STEPS))
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+        receiver.respond(TestSetup.HEALTH_PATH, code)
+        val mark = receiver.exchanges.size
+        TestSetup.syncManager().performSync().getOrThrow()
+        val message = context.appPreferences().getWebhookLogs(LogType.HEALTH_CONNECT).single().errorMessage.orEmpty()
+        if (code in 400..499 && code != 408 && code != 429) assertTrue("$code: $message", message.endsWith("(permanent error, not retried)"))
+        receiver.since(mark).size
+    }
+
+    /** T13. Client errors are not retried, transient ones three times. */
+    @Test
+    fun permanentClientErrorsAreNotRetried() {
+        val codes = listOf(400, 401, 404, 429, 500, 503)
+        assertEquals(mapOf(400 to 1, 401 to 1, 404 to 1, 429 to 3, 500 to 3, 503 to 3), codes.associateWith { attemptsFor(it) })
+    }
+
+    /**
+     * T13 for 408, a new finding (F8): a request timeout is transient and tried three times,
+     * so the receiver should see three requests. Red on main, it sees six: OkHttp retries a
+     * 408 once by itself inside every attempt (RetryAndFollowUpInterceptor, which only skips
+     * that when retryOnConnectionFailure is off), so the app's count is doubled.
+     */
+    @Ignore("F8: fixed in phase 3")
+    @Test
+    fun requestTimeoutIsTriedThreeTimes() {
+        assertEquals(3, attemptsFor(408))
+    }
+
+    /**
+     * F6, the new rule for permanent errors in the outbox. 401 and 403 are a configuration
+     * error that a correction can still fix, so the payload stays queued and holds the drain;
+     * any other permanent 4xx will never be accepted, so it is logged "permanent error,
+     * dropped from the outbox" and removed, at the first attempt and when drained. Red on
+     * main: a 404 is queued like any failure and then blocks the head of the outbox until the
+     * cap of 50 pushes it out.
+     */
+    @Ignore("F6: fixed in phase 3")
+    @Test
+    fun onlyAuthErrorsStayInTheOutbox() = runBlocking {
+        TestSetup.health(receiver, setOf(STEPS))
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+        receiver.respond(TestSetup.HEALTH_PATH, 401)
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals("a 401 stays queued", 1, PendingSyncStore.forContext(context).size())
+
+        AppStateRule.reset()
+        TestSetup.health(receiver, setOf(STEPS))
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+        receiver.respond(TestSetup.HEALTH_PATH, 404)
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals("a 404 is dropped", 0, PendingSyncStore.forContext(context).size())
+        assertTrue(context.appPreferences().getWebhookLogs(LogType.HEALTH_CONNECT).any { it.errorMessage.orEmpty().contains("permanent error, dropped from the outbox") })
+
+        // Queued earlier by a 503, then refused for good when drained: dropped there too.
+        AppStateRule.reset()
+        TestSetup.health(receiver, setOf(STEPS))
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+        receiver.respond(TestSetup.HEALTH_PATH, 503)
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(1, PendingSyncStore.forContext(context).size())
+        receiver.respond(TestSetup.HEALTH_PATH, 404)
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(0, PendingSyncStore.forContext(context).size())
+    }
+
+    /**
+     * T14. Two failed syncs with new data each, then a healthy one: the receiver gets the old
+     * outbox item, the newer one, then the new payload, in that order and with a strictly
+     * rising sequence. With two URLs of which one fails, one success is a delivery and
+     * nothing is queued.
+     */
+    @Test
+    fun drainKeepsOrderAndSequence() = runBlocking {
+        TestSetup.health(receiver, setOf(STEPS))
+        receiver.respond(TestSetup.HEALTH_PATH, 503)
+        val first = fixture.insert(fixture.steps(1, ago(50), ago(45)))
+        TestSetup.syncManager().performSync().getOrThrow()
+        val second = fixture.insert(fixture.steps(2, ago(40), ago(35)))
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(2, PendingSyncStore.forContext(context).size())
+
+        receiver.respond(TestSetup.HEALTH_PATH, 200)
+        val third = fixture.insert(fixture.steps(3, ago(30), ago(25)))
+        val mark = receiver.exchanges.size
+        TestSetup.syncManager().performSync().getOrThrow()
+
+        val delivered = receiver.since(mark).map { Conservation.parse(it.text) }
+        assertEquals(listOf(first, second, third), delivered.map { Conservation.records(it).map { r -> r.second } })
+        val sequences = delivered.map { it.num("sequence")!!.toLong() }
+        assertEquals(sequences.sorted(), sequences)
+        assertEquals(sequences.size, sequences.toSet().size)
+
+        AppStateRule.reset()
+        TestSetup.health(receiver, setOf(STEPS))
+        context.appPreferences().setHealthWebhookUrls(listOf(receiver.url(TestSetup.HEALTH_PATH), receiver.url("/api/webhook/ci-down")))
+        receiver.respond("/api/webhook/ci-down", 503)
+        receiver.respond(TestSetup.HEALTH_PATH, 200)
+        fixture.insert(fixture.steps(4, ago(20), ago(15)))
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals("one URL took it: delivered", 0, PendingSyncStore.forContext(context).size())
+    }
+
+    /** T15. A queued Screen Time payload is drained with the Screen Time secret and headers, not the health ones. */
+    @Test
+    fun screenTimeOutboxUsesScreenTimeSecret() = runBlocking {
+        ScreenTimeUse.ensureToday()
+        TestSetup.screenTime(receiver)
+        TestSetup.health(receiver, setOf(STEPS))
+        receiver.respond(TestSetup.SCREEN_PATH, 503)
+        ScreenTimeSyncManager(context).performSync().getOrThrow()
+        assertEquals(1, PendingSyncStore.forContext(context).size())
+
+        receiver.respond(TestSetup.SCREEN_PATH, 200)
+        val mark = receiver.exchanges.size
+        TestSetup.syncManager().performSync().getOrThrow() // the health sync drains the outbox first
+
+        val drained = receiver.since(mark).single { it.path == TestSetup.SCREEN_PATH }
+        assertEquals(Hmac.requestSignature(TestSetup.SCREEN_SECRET, drained.body), drained.header("X-Signature"))
+        assertEquals("ci-key-screen", drained.header("X-Api-Key"))
+        assertEquals("screen_time", Conservation.parse(drained.text).str("source"))
+    }
+
+    /**
+     * F5. A sync that only drains the outbox did deliver: the failure streak ends and "Last
+     * sync" moves. Red on main: PendingDrainer tells neither SyncFailureNotifier nor
+     * SyncStatusStore, so after an outage without new data the failure notification stays.
+     */
+    @Ignore("F5: fixed in phase 3")
+    @Test
+    fun drainEndsTheFailureStreak() = runBlocking {
+        TestSetup.health(receiver, setOf(STEPS))
+        fixture.insert(fixture.steps(12, ago(30), ago(20)))
+        receiver.respond(TestSetup.HEALTH_PATH, 503)
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(1, TestSetup.streak("HEALTH_CONNECT"))
+        val failedAt = SyncStatusStore.read(context, LogType.HEALTH_CONNECT)
+        assertFalse(failedAt.lastSuccess)
+
+        receiver.respond(TestSetup.HEALTH_PATH, 200)
+        Thread.sleep(5)
+        TestSetup.syncManager().performSync().getOrThrow()
+
+        assertEquals(0, PendingSyncStore.forContext(context).size())
+        assertEquals("the drain delivered, the streak is over", 0, TestSetup.streak("HEALTH_CONNECT"))
+        val after = SyncStatusStore.read(context, LogType.HEALTH_CONNECT)
+        assertTrue(after.lastSuccess)
+        assertTrue(after.lastSyncMillis!! > failedAt.lastSyncMillis!!)
     }
 }
