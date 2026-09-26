@@ -124,7 +124,9 @@ class WebhookDeliveryTest {
         HcFixture.awayFromMidnight()
         TestSetup.health(receiver, setOf(STEPS))
         fixture.assertNoForeignRecords(StepsRecord::class)
-        fixture.insert(fixture.steps(1234, ago(40), ago(30)))
+        // Inside today whatever the hour: awayFromMidnight guarantees it is past 00:03. (The
+        // first version put the record 30 to 40 minutes back and failed just after midnight.)
+        fixture.insert(fixture.steps(1234, ago(2), ago(1)))
 
         TestSetup.syncManager().performSync().getOrThrow()
 
