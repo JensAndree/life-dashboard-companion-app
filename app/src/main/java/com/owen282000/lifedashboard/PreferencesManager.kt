@@ -475,7 +475,7 @@ class PreferencesManager(context: Context) {
         enabled = prefs.getBoolean(KEY_RECEIVE_ENABLED, false),
         types = (prefs.getString(KEY_RECEIVE_TYPES, "") ?: "")
             .split(",")
-            .mapNotNull { name -> WriteBackType.entries.firstOrNull { it.name == name } }
+            .mapNotNull { ConfigBackupManager.writeBackTypeFrom(it) }
             .toSet(),
         olderMeasurements = prefs.getBoolean(KEY_RECEIVE_OLDER, false),
         sourceUrl = getReceiveSourceUrl()
@@ -484,7 +484,7 @@ class PreferencesManager(context: Context) {
     fun setReceiveEnabled(enabled: Boolean) = prefs.edit { putBoolean(KEY_RECEIVE_ENABLED, enabled) }
 
     fun setReceiveTypes(types: Set<WriteBackType>) =
-        prefs.edit { putString(KEY_RECEIVE_TYPES, WriteBackType.entries.filter { it in types }.joinToString(",") { it.name }) }
+        prefs.edit { putString(KEY_RECEIVE_TYPES, WriteBackType.entries.filter { it in types }.joinToString(",") { it.key }) }
 
     fun setReceiveOlderMeasurements(enabled: Boolean) = prefs.edit { putBoolean(KEY_RECEIVE_OLDER, enabled) }
 

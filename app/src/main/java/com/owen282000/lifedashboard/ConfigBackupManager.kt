@@ -61,11 +61,13 @@ class ConfigBackupManager(private val context: Context) {
                     .filterValues { it != DEFAULT_RESOLUTION }
                     .entries.sortedBy { it.key.name }
                     .associate { it.key.name to it.value.name },
-                phoneName = prefs.getPhoneName(),
+                // Empty rather than absent for "none", so a new export can clear what an
+                // older one must leave alone.
+                phoneName = prefs.getPhoneName().orEmpty(),
                 receiveEnabled = receive.enabled,
-                receiveTypes = WriteBackType.entries.filter { it in receive.types }.map { it.name },
+                receiveTypes = WriteBackType.entries.filter { it in receive.types }.map { it.key },
                 receiveOlderMeasurements = receive.olderMeasurements,
-                receiveSourceUrl = receive.sourceUrl
+                receiveSourceUrl = receive.sourceUrl.orEmpty()
             )
         )
     }
@@ -123,12 +125,14 @@ class ConfigBackupManager(private val context: Context) {
             prefs.setScreenTimeDayBoundaryHour(screenTimeDayBoundaryHour)
             prefs.setUseScreenTimeDayBoundary(screenTimeUseDayBoundary)
             failureNotificationThreshold?.let { SyncFailureNotifier.setThreshold(context, it) }
-            prefs.setPhoneName(phoneName)
-            prefs.setReceiveEnabled(receiveEnabled)
-            prefs.setReceiveTypes(receiveTypes.mapNotNull { name -> WriteBackType.entries.firstOrNull { it.name == name } }.toSet())
-            prefs.setReceiveOlderMeasurements(receiveOlderMeasurements)
+            // A backup from before 1.20.0 carries none of these: the phone name, the Receive
+            // switches and the source URL (and with it the ledger) stay as they are.
+            phoneName?.let { prefs.setPhoneName(it) }
+            receiveEnabled?.let { prefs.setReceiveEnabled(it) }
+            receiveTypes?.let { names -> prefs.setReceiveTypes(names.mapNotNull { ConfigBackupManager.writeBackTypeFrom(it) }.toSet()) }
+            receiveOlderMeasurements?.let { prefs.setReceiveOlderMeasurements(it) }
             // Only a URL the health section actually has; the URLs were written above.
-            prefs.setReceiveSourceUrl(receiveSourceUrl?.takeIf { it in backup.health.webhookUrls })
+            receiveSourceUrl?.let { url -> prefs.setReceiveSourceUrl(url.takeIf { it in backup.health.webhookUrls }) }
             // Null means a backup from before resolutions existed: leave the setting alone.
             seriesResolutions?.let { stored ->
                 prefs.setSeriesResolutions(
@@ -154,6 +158,10 @@ class ConfigBackupManager(private val context: Context) {
             val known = HealthDataType.entries.associateBy { it.name }
             return names.mapNotNull { known[it] }.toSet()
         }
+
+        /** A Receive type by its protocol key, or by the enum name a pre-release build wrote; unknown is dropped. */
+        fun writeBackTypeFrom(name: String): WriteBackType? =
+            WriteBackType.fromKey(name) ?: WriteBackType.entries.firstOrNull { it.name == name }
     }
 
     /** One section's webhook and schedule settings, as the backup stores them. */

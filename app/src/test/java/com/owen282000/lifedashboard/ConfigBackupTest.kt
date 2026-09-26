@@ -53,7 +53,7 @@ class ConfigBackupTest {
             seriesResolutions = mapOf("HEART_RATE" to "ONE_MINUTE", "STEPS" to "HOURLY"),
             phoneName = "Pixel 8",
             receiveEnabled = true,
-            receiveTypes = listOf("WEIGHT", "BLOOD_PRESSURE"),
+            receiveTypes = listOf("weight", "blood_pressure"),
             receiveOlderMeasurements = true,
             receiveSourceUrl = "https://example.com/health"
         )
@@ -221,9 +221,18 @@ class ConfigBackupTest {
         assertNull(restored.health.syncTimes)
         assertNull(restored.health.quietFrom)
         assertNull(restored.options.seriesResolutions)
+        // Absent, not defaulted: an import must leave the phone name, Receive and its ledger alone.
         assertNull(restored.options.phoneName)
-        assertFalse(restored.options.receiveEnabled)
-        assertTrue(restored.options.receiveTypes.isEmpty())
+        assertNull(restored.options.receiveEnabled)
+        assertNull(restored.options.receiveTypes)
+        assertNull(restored.options.receiveOlderMeasurements)
         assertNull(restored.options.receiveSourceUrl)
+    }
+
+    @Test
+    fun receiveTypesAreProtocolKeysAndEnumNamesFromAPreReleaseBuildStillRead() {
+        assertEquals(WriteBackType.BLOOD_PRESSURE, ConfigBackupManager.writeBackTypeFrom("blood_pressure"))
+        assertEquals(WriteBackType.BLOOD_PRESSURE, ConfigBackupManager.writeBackTypeFrom("BLOOD_PRESSURE"))
+        assertNull(ConfigBackupManager.writeBackTypeFrom("heart_rate"))
     }
 }

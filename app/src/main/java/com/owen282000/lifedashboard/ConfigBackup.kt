@@ -164,11 +164,19 @@ data class OptionsConfig(
     @SerialName("failure_notification_threshold") val failureNotificationThreshold: Int? = null,
     /** Type name to resolution name, only for types not at raw; absent in older backups. */
     @SerialName("series_resolutions") val seriesResolutions: Map<String, String>? = null,
-    /** The phone's name for MQTT (1.20.0); null or absent means no name. */
+    /**
+     * The phone's name for MQTT (1.20.0). Absent in a backup from before names existed, and
+     * then left alone on import; an export writes an empty string for a phone without one.
+     */
     @SerialName("phone_name") val phoneName: String? = null,
-    /** Receive (1.20.0): the switches and the source URL; the ledger stays behind like the watermarks. */
-    @SerialName("receive_enabled") val receiveEnabled: Boolean = false,
-    @SerialName("receive_types") val receiveTypes: List<String> = emptyList(),
-    @SerialName("receive_older_measurements") val receiveOlderMeasurements: Boolean = false,
+    /**
+     * Receive (1.20.0): the switches and the source URL. All absent in an older backup, and
+     * then left alone on import, like the resolutions; the ledger stays behind like the
+     * watermarks. Types are the protocol keys (weight, blood_pressure), not enum names.
+     */
+    @SerialName("receive_enabled") val receiveEnabled: Boolean? = null,
+    @SerialName("receive_types") val receiveTypes: List<String>? = null,
+    @SerialName("receive_older_measurements") val receiveOlderMeasurements: Boolean? = null,
+    /** An export writes an empty string when no source is chosen; absent means an older backup. */
     @SerialName("receive_source_url") val receiveSourceUrl: String? = null
 )

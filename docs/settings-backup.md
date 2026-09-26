@@ -76,14 +76,14 @@ Plain exports are readable JSON:
     "allow_http_webhooks": false,
     "phone_name": "Pixel 8",
     "receive_enabled": true,
-    "receive_types": ["WEIGHT", "BLOOD_PRESSURE"],
+    "receive_types": ["weight", "blood_pressure"],
     "receive_older_measurements": false,
     "receive_source_url": "https://example.com/health"
   }
 }
 ```
 
-`receive_source_url` is only applied when it is one of the health webhook URLs in the same file.
+`receive_source_url` is only applied when it is one of the health webhook URLs in the same file. A backup written before 1.20.0 has none of the `phone_name` and `receive_*` keys, and importing it leaves the phone name, the Receive switches and the ledger as they are.
 
 Unknown keys are ignored on import, so a file from a newer version still restores what the installed build understands. Data types are stored by name, and names this build does not know are skipped rather than failing the import.
 
