@@ -67,6 +67,16 @@ object ResilientReadLogic {
         records.partition(isOwn)
 
     /**
+     * Whether a record is one Receive wrote: this app's package as the data origin and a
+     * client record id, which Receive always sets (the integration's id for the reading).
+     * The package alone is not enough: the debug seeder writes under the same package
+     * without a client id, and its week of data is meant to be read and sent like any
+     * other source's.
+     */
+    fun isReceiveWrite(dataOrigin: String, ownPackage: String, clientRecordId: String?): Boolean =
+        dataOrigin == ownPackage && !clientRecordId.isNullOrEmpty()
+
+    /**
      * The watermark to store after a read: the newest modification time of the delivered
      * batch, and of the skipped own records too when the type was not capped. A skipped own
      * record would otherwise stay above the watermark and be read and counted again on every

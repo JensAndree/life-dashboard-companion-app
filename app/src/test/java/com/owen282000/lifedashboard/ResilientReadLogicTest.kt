@@ -2,6 +2,7 @@ package com.owen282000.lifedashboard
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -153,5 +154,16 @@ class ResilientReadLogicTest {
         val next = ResilientReadLogic.watermarkAfter(delivered, own, capped = true) { it.modified }
         assertEquals(base.plus(Duration.ofHours(1)), next)
         assertTrue(heldBack.modified > next!!)
+    }
+
+    @Test
+    fun `a record counts as written by Receive only with the app's package and a client id`() {
+        val app = "com.owen282000.lifedashboard"
+        assertTrue(ResilientReadLogic.isReceiveWrite(app, app, "input_number.wb_weight@1790444436456"))
+        // The debug seeder writes under the app's package without a client id: read like any source.
+        assertFalse(ResilientReadLogic.isReceiveWrite(app, app, null))
+        assertFalse(ResilientReadLogic.isReceiveWrite(app, app, ""))
+        // Another app's record is never ours, whatever its client id.
+        assertFalse(ResilientReadLogic.isReceiveWrite("com.zepp.app", app, "input_number.wb_weight@1790444436456"))
     }
 }

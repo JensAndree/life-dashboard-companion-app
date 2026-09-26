@@ -331,12 +331,15 @@ class HealthConnectManager(private val context: Context) {
     /**
      * The own-record rules of Receive (issue #62), see [ResilientReadLogic.partitionOwn] and
      * [ResilientReadLogic.watermarkAfter]. Health Connect sets dataOrigin to the writing
-     * package and it cannot be forged, so the package name is the whole test; there is no
-     * setting, because nobody wants their own measurements returned to them.
+     * package and it cannot be forged; together with the client record id that Receive
+     * always sets it identifies what Receive wrote (see [ResilientReadLogic.isReceiveWrite]).
+     * There is no setting, because nobody wants their own measurements returned to them.
      */
     private fun <T : Record> ownRecordsPartition(records: List<T>): Pair<List<T>, List<T>> {
         val own = context.packageName
-        return ResilientReadLogic.partitionOwn(records) { it.metadata.dataOrigin.packageName == own }
+        return ResilientReadLogic.partitionOwn(records) {
+            ResilientReadLogic.isReceiveWrite(it.metadata.dataOrigin.packageName, own, it.metadata.clientRecordId)
+        }
     }
 
     private fun <T : Record> watermarkFor(delivered: List<T>, own: List<T>, capped: Boolean): Instant? =
