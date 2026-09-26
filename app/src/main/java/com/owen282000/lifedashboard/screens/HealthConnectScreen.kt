@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.owen282000.lifedashboard.ExportManager
 import com.owen282000.lifedashboard.HealthConnectManager
+import com.owen282000.lifedashboard.MqttSupport
 import com.owen282000.lifedashboard.R
 import com.owen282000.lifedashboard.ui.theme.HealthPrimary
 import com.owen282000.lifedashboard.viewmodel.HcAvailability
@@ -263,7 +264,7 @@ fun HealthConnectContent(
                     if (state.includeDailyTotals) stringResource(R.string.health_daily_totals) else stringResource(R.string.health_no_daily_totals),
                     if (state.allowHttpWebhooks) stringResource(R.string.sync_advanced_plain_http_allowed) else stringResource(R.string.sync_advanced_https_only),
                     if (state.clientCertAlias != null) stringResource(R.string.sync_advanced_client_cert) else null,
-                    state.phoneName?.takeIf { it.isNotBlank() }?.let { stringResource(R.string.sync_advanced_phone_name, it.trim()) }
+                    MqttSupport.phoneSlug(state.phoneName)?.let { stringResource(R.string.sync_advanced_phone_name, it) }
                 ).joinToString(", "),
                 expanded = advancedExpanded,
                 onToggle = { advancedExpanded = !advancedExpanded }

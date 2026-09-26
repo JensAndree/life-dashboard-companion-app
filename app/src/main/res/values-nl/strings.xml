@@ -51,6 +51,8 @@
     <string name="phone_name_title">Telefoonnaam</string>
     <string name="phone_name_description">Voor een tweede telefoon op dezelfde MQTT-broker. Leeg laat het apparaat en de topics zoals ze zijn; een naam geeft deze telefoon een eigen apparaat en eigen topics onder het basistopic.</string>
     <string name="phone_name_placeholder">Optioneel</string>
+    <string name="phone_name_device_id">Publiceert als %1$s. Het oude apparaat blijft in Home Assistant staan totdat je het daar verwijdert.</string>
+    <string name="phone_name_unusable">Deze naam bevat geen letters of cijfers, dus de telefoon blijft naamloos.</string>
 
     <!-- Ontvangen: metingen uit Home Assistant naar Health Connect -->
     <string name="receive_title">Ontvangen</string>

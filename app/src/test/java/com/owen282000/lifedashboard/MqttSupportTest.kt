@@ -259,6 +259,40 @@ class MqttSupportTest {
     }
 
     @Test
+    fun `renaming the phone clears every topic of the old device first, and only then`() {
+        val keys = listOf("weight", "steps_today")
+        assertEquals(emptyList<String>(), MqttSupport.topicsToClearOnRename("lifedashboard", "homeassistant", keys, null, null))
+        assertEquals(emptyList<String>(), MqttSupport.topicsToClearOnRename("lifedashboard", "homeassistant", keys, "pixel_8", "pixel_8"))
+
+        // Nameless for months, then named: the nameless device goes.
+        assertEquals(
+            listOf(
+                "lifedashboard/weight/state",
+                "lifedashboard/weight/attributes",
+                "homeassistant/sensor/life_dashboard_companion_weight/config",
+                "lifedashboard/steps_today/state",
+                "lifedashboard/steps_today/attributes",
+                "homeassistant/sensor/life_dashboard_companion_steps_today/config"
+            ),
+            MqttSupport.topicsToClearOnRename("lifedashboard", "homeassistant", keys, previousSlug = null, currentSlug = "pixel_8")
+        )
+        // Renamed again: the previous name's device goes, the nameless topics are left alone.
+        assertEquals(
+            listOf(
+                "lifedashboard/pixel_8/weight/state",
+                "lifedashboard/pixel_8/weight/attributes",
+                "homeassistant/sensor/life_dashboard_companion_pixel_8_weight/config"
+            ),
+            MqttSupport.topicsToClearOnRename("lifedashboard", "homeassistant", listOf("weight"), previousSlug = "pixel_8", currentSlug = "zoe")
+        )
+        // Name removed: back to nameless, the named device goes.
+        assertEquals(
+            listOf("lifedashboard/zoe/weight/state", "lifedashboard/zoe/weight/attributes", "homeassistant/sensor/life_dashboard_companion_zoe_weight/config"),
+            MqttSupport.topicsToClearOnRename("lifedashboard", "homeassistant", listOf("weight"), previousSlug = "zoe", currentSlug = null)
+        )
+    }
+
+    @Test
     fun `numeric states are rounded to sensible decimals`() {
         assertEquals("78.2", MqttSupport.num(78.2006048685296))
         assertEquals("5.55", MqttSupport.num(5.5499, 2))

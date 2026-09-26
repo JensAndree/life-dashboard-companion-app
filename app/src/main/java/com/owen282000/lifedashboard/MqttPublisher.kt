@@ -73,7 +73,20 @@ class MqttPublisher(private val context: Context) {
             ?: emptyList()
         val sensors = MqttSupport.mergeSensors(cached, fresh)
         if (sensors.isNotEmpty()) preferencesManager.setMqttSensorCache(section, Json.encodeToString(sensors))
-        val result = publish(sensors, settings, preferencesManager.getPhoneName()) { preferencesManager.setLastMqttStatus(section, it) }
+        val phoneName = preferencesManager.getPhoneName()
+        val currentSlug = MqttSupport.phoneSlug(phoneName)
+        // A renamed phone would leave its old device on the broker with frozen values (the
+        // topics are retained), so the sensors under the previous slug are cleared on the
+        // first publish after the rename, and the slug is recorded once that publish succeeded.
+        val clearFirst = MqttSupport.topicsToClearOnRename(
+            settings.baseTopic,
+            MqttSupport.DEFAULT_DISCOVERY_PREFIX,
+            sensors.map { it.key } + MqttSupport.RETIRED_SENSOR_KEYS,
+            previousSlug = preferencesManager.getMqttPublishedSlug(section),
+            currentSlug = currentSlug
+        )
+        val result = publish(sensors, settings, phoneName, clearFirst) { preferencesManager.setLastMqttStatus(section, it) }
+        if (result.isSuccess && (result.getOrNull() ?: 0) > 0) preferencesManager.setMqttPublishedSlug(section, currentSlug)
         // The Logs tab lists MQTT publishes next to webhook deliveries, so a failing broker
         // shows up in the same place as a failing endpoint.
         if (settings.enabled && settings.host.isNotBlank() && sensors.isNotEmpty()) {
@@ -101,6 +114,8 @@ class MqttPublisher(private val context: Context) {
         settings: MqttSettings,
         /** The phone's name, which puts its slug in every topic and id; null keeps the topics as they were. */
         phoneName: String?,
+        /** Retained topics to empty before publishing: the old device after a rename. */
+        clearFirst: List<String>,
         setStatus: (String) -> Unit
     ): Result<Int> = withContext(Dispatchers.IO) {
         if (!settings.enabled || settings.host.isBlank()) {
@@ -134,17 +149,12 @@ class MqttPublisher(private val context: Context) {
                     "unknown"
                 }
                 // Retire sensors that older versions published under other keys, so Home
-                // Assistant does not keep a stale "Steps (latest record)" next to "Steps Today".
-                // State and attributes go first: an empty attributes payload on a still-living
-                // entity makes Home Assistant log "Erroneous JSON", the config clear removes it.
-                for (key in MqttSupport.RETIRED_SENSOR_KEYS) {
-                    for (topic in listOf(
-                        MqttSupport.stateTopic(settings.baseTopic, key, slug),
-                        MqttSupport.attributesTopic(settings.baseTopic, key, slug),
-                        MqttSupport.discoveryTopic(MqttSupport.DEFAULT_DISCOVERY_PREFIX, key, slug)
-                    )) {
-                        client.publishWith().topic(topic).payload(ByteArray(0)).qos(MqttQos.AT_LEAST_ONCE).retain(true).send()
-                    }
+                // Assistant does not keep a stale "Steps (latest record)" next to "Steps Today",
+                // and take the previous device off the broker after a rename. See
+                // MqttSupport.topicsFor for the order of the three topics.
+                val retired = MqttSupport.topicsFor(settings.baseTopic, MqttSupport.DEFAULT_DISCOVERY_PREFIX, MqttSupport.RETIRED_SENSOR_KEYS, slug)
+                for (topic in clearFirst + retired) {
+                    client.publishWith().topic(topic).payload(ByteArray(0)).qos(MqttQos.AT_LEAST_ONCE).retain(true).send()
                 }
                 for (sensor in sensors) {
                     client.publishWith()

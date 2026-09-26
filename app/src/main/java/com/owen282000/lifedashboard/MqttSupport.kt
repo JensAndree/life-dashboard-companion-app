@@ -73,6 +73,32 @@ object MqttSupport {
         "$discoveryPrefix/sensor/${deviceId(slug)}_$key/config"
 
     /**
+     * Every retained topic the sensors with [keys] occupy under [slug]: state and attributes
+     * first, the discovery config last, which is the order that clears an entity cleanly
+     * (an empty attributes payload on a still-living entity makes Home Assistant log
+     * "Erroneous JSON"; the config clear removes it). Used to retire old sensor keys and, when
+     * the phone's name changes, to take the old device off the broker.
+     */
+    fun topicsFor(baseTopic: String, discoveryPrefix: String, keys: Collection<String>, slug: String?): List<String> =
+        keys.flatMap { key ->
+            listOf(stateTopic(baseTopic, key, slug), attributesTopic(baseTopic, key, slug), discoveryTopic(discoveryPrefix, key, slug))
+        }
+
+    /**
+     * What to clear before publishing under [currentSlug] when the phone last published under
+     * [previousSlug]: nothing while the name is unchanged, otherwise every topic of every
+     * known sensor under the old slug, so the old device does not live on with frozen values
+     * next to the new one. A phone that never recorded a slug published nameless.
+     */
+    fun topicsToClearOnRename(
+        baseTopic: String,
+        discoveryPrefix: String,
+        keys: Collection<String>,
+        previousSlug: String?,
+        currentSlug: String?
+    ): List<String> = if (previousSlug == currentSlug) emptyList() else topicsFor(baseTopic, discoveryPrefix, keys, previousSlug)
+
+    /**
      * Maps the latest record of each sensor-like data type to an MQTT sensor. Event-like types
      * (exercise, nutrition, mindfulness, cycle tracking) are intentionally not mapped; they do
      * not fit Home Assistant's single-value sensor model and remain webhook-only.

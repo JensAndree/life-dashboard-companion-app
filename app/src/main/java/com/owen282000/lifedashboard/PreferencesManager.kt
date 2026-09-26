@@ -121,6 +121,11 @@ class PreferencesManager(context: Context) {
 
     fun getMqttSensorCache(section: MqttSection): String? = prefs.getString(section.prefix + "sensor_cache", null)
 
+    /** The phone slug this section last published under; null means nameless, which is also what an install from before names did. */
+    fun getMqttPublishedSlug(section: MqttSection): String? = prefs.getString(section.prefix + "published_slug", null)?.takeIf { it.isNotEmpty() }
+
+    fun setMqttPublishedSlug(section: MqttSection, slug: String?) = prefs.edit { putString(section.prefix + "published_slug", slug.orEmpty()) }
+
     fun setMqttSensorCache(section: MqttSection, json: String) {
         prefs.edit().putString(section.prefix + "sensor_cache", json).apply()
     }

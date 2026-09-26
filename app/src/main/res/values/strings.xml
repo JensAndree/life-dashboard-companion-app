@@ -53,6 +53,8 @@
     <string name="phone_name_title">Phone name</string>
     <string name="phone_name_description">For a second phone on the same MQTT broker. Empty keeps the device and the topics as they are; a name gives this phone its own device and its own topics under the base topic.</string>
     <string name="phone_name_placeholder">Optional</string>
+    <string name="phone_name_device_id">Publishes as %1$s. The old device stays in Home Assistant until you delete it there.</string>
+    <string name="phone_name_unusable">This name has no letters or digits, so the phone stays unnamed.</string>
 
     <!-- Receive: measurements from Home Assistant into Health Connect -->
     <string name="receive_title">Receive</string>

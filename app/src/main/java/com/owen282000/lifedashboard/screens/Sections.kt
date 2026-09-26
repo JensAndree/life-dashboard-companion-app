@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.permission.HealthPermission
 import com.owen282000.lifedashboard.HealthDataType
+import com.owen282000.lifedashboard.MqttSupport
 import com.owen282000.lifedashboard.R
 import com.owen282000.lifedashboard.WebhookSecret
 import com.owen282000.lifedashboard.ui.theme.Success
@@ -482,6 +483,17 @@ fun PhoneNameLine(name: String, accent: Color, onChange: (String) -> Unit) {
             accent = accent,
             placeholder = stringResource(R.string.phone_name_placeholder)
         )
+        // The slug is what actually goes on the wire, so it is shown as typed; a name with
+        // nothing usable in it would silently publish nameless, which is said out loud.
+        if (name.isNotBlank()) {
+            val slug = MqttSupport.phoneSlug(name)
+            Text(
+                if (slug != null) stringResource(R.string.phone_name_device_id, MqttSupport.deviceId(slug))
+                else stringResource(R.string.phone_name_unusable),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (slug != null) accent else MaterialTheme.colorScheme.error
+            )
+        }
     }
 }
 
