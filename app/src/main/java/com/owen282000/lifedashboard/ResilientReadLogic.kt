@@ -61,7 +61,7 @@ object ResilientReadLogic {
     /**
      * Splits records that are new since the watermark into the ones this app wrote itself and
      * the rest (Receive, issue #62). What the app wrote came from Home Assistant; sending it
-     * back would be an echo. [isOwn] compares the record's data origin with the app's package.
+     * back would be an echo. [isOwn] is [isReceiveWrite]: the app's package and a client record id.
      */
     fun <T> partitionOwn(records: List<T>, isOwn: (T) -> Boolean): Pair<List<T>, List<T>> =
         records.partition(isOwn)
