@@ -114,7 +114,9 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       # Every line of `script` is its own shell and the emulator is killed right after, so the
-      # whole run, reports included, is one line.
+      # whole run, reports included, is one line. A pull request runs the suite without the
+      # @LargeTest tests (the real 20 s budgets and hanging calls); a push to main and a manual
+      # run take everything.
       - name: Run the suite on an emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
@@ -124,7 +126,7 @@ jobs:
           avd-name: ldc-instrumented
           disk-size: 4096M
           disable-animations: true
-          script: ./scripts/instrumented.sh --ci
+          script: ./scripts/instrumented.sh --ci ${{ github.event_name == 'pull_request' && '--small' || '' }}
 
       - name: Upload the JUnit report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

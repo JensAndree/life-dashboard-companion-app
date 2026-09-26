@@ -8,6 +8,7 @@ import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
 import com.owen282000.lifedashboard.FailedReading
 import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType
@@ -426,6 +427,7 @@ class ReceiveTest {
      * reading is failed as hc_unavailable, never permission_denied, and the integration
      * offers them again; once Health Connect answers, they are written.
      */
+    @LargeTest
     @Test
     fun permissionLookupThatHangsIsHcUnavailable() = runBlocking {
         receiveSetup()
@@ -446,6 +448,7 @@ class ReceiveTest {
     }
 
     /** T42. An insert that never returns: after the 20 s write budget the readings are hc_unavailable, the ledger untouched. */
+    @LargeTest
     @Test
     fun insertThatHangsRespectsTheWriteBudget() = runBlocking {
         receiveSetup()

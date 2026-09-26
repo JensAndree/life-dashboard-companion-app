@@ -2,6 +2,7 @@ package com.owen282000.lifedashboard.sync
 
 import androidx.health.connect.client.records.StepsRecord
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
 import androidx.work.WorkInfo
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.owen282000.lifedashboard.DeletedRecord
@@ -111,6 +112,7 @@ class SchedulerChainTest {
      * catch-all around the backoff delay and logged as a failed delivery.
      */
     @Ignore("F1: fixed in phase 3")
+    @LargeTest
     @Test
     fun stoppedRunQueuesExactlyOneSuccessorAndLosesNothing() {
         TestSetup.health(receiver, setOf(STEPS))

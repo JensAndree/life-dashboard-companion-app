@@ -3,6 +3,7 @@ package com.owen282000.lifedashboard.sync
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
 import com.owen282000.lifedashboard.HealthDataType.HEART_RATE
 import com.owen282000.lifedashboard.HealthDataType.STEPS
 import com.owen282000.lifedashboard.HealthSyncManager
@@ -47,6 +48,7 @@ import java.time.temporal.ChronoUnit
  * that 1.18.0 taught, tested without WorkManager so only the sync code is in the way.
  */
 @RunWith(AndroidJUnit4::class)
+@LargeTest
 class CancellationTest {
 
     private val receiver = Receiver()

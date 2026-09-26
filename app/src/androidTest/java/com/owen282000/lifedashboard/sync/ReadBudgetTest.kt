@@ -4,6 +4,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
 import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType.STEPS
 import com.owen282000.lifedashboard.HealthDataType.WEIGHT
@@ -38,6 +39,7 @@ import org.junit.runner.RunWith
  * the SPEC asks for: per type and in total, like the deletion step (5 s and 20 s).
  */
 @RunWith(AndroidJUnit4::class)
+@LargeTest
 class ReadBudgetTest {
 
     private val receiver = Receiver()

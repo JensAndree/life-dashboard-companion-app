@@ -4,6 +4,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.LargeTest
 import com.owen282000.lifedashboard.DeletionSummary
 import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType
@@ -176,6 +177,7 @@ class DeletionTrackingTest {
      * five types are named in deletions_unavailable, and no token moves: the feed positions
      * stay for the next sync.
      */
+    @LargeTest
     @Test
     fun deletionStepHonoursItsBudget() = runBlocking {
         val types = setOf(STEPS, HEART_RATE, WEIGHT, DISTANCE, SLEEP)
