@@ -84,6 +84,13 @@ class WriteBackLedgerTest {
     }
 
     @Test
+    fun `a source package is shown by its app name when known, and as it is otherwise`() {
+        assertEquals("Samsung Health", SourceApps.label("com.sec.android.app.shealth"))
+        assertEquals("Zepp", SourceApps.label("com.xiaomi.hm.health"))
+        assertEquals("com.example.scale", SourceApps.label("com.example.scale"))
+    }
+
+    @Test
     fun `what an accepted request carried leaves the report, what arrived since stays`() {
         val sent = WriteBackReport(ack = listOf("a"), failed = listOf(FailedReading("b", "too_old")))
         val stored = sent.merge(WriteBackReport(ack = listOf("c"), failed = listOf(FailedReading("d", "invalid"))))

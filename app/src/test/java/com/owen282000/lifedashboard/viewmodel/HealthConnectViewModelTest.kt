@@ -361,7 +361,7 @@ class HealthConnectViewModelTest {
         vm.toggleReceiveType(WriteBackType.WEIGHT, true)
         assertNull(vm.state.value.receivePermissionPrompt)
         assertEquals(setOf(WriteBackType.WEIGHT), settings.receive.types)
-        assertEquals(UiMessage.OtherSourceWrites("com.xiaomi.hm.health", WriteBackType.WEIGHT), toasts.last())
+        assertEquals("the package is shown by its app name", UiMessage.OtherSourceWrites("Zepp", WriteBackType.WEIGHT), toasts.last())
 
         vm.setReceiveOlderMeasurements(true)
         assertTrue(settings.receive.olderMeasurements)

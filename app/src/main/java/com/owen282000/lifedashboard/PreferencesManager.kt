@@ -481,7 +481,12 @@ class PreferencesManager(context: Context) {
         sourceUrl = getReceiveSourceUrl()
     )
 
-    fun setReceiveEnabled(enabled: Boolean) = prefs.edit { putBoolean(KEY_RECEIVE_ENABLED, enabled) }
+    fun setReceiveEnabled(enabled: Boolean) = prefs.edit {
+        putBoolean(KEY_RECEIVE_ENABLED, enabled)
+        // The notice about an outdated integration was about the last answer read; switching
+        // off means no answer is read, so it must not sit there waiting for the next switch-on.
+        if (!enabled) putBoolean(KEY_RECEIVE_OUTDATED, false)
+    }
 
     fun setReceiveTypes(types: Set<WriteBackType>) =
         prefs.edit { putString(KEY_RECEIVE_TYPES, WriteBackType.entries.filter { it in types }.joinToString(",") { it.key }) }
@@ -493,7 +498,12 @@ class PreferencesManager(context: Context) {
     /** Choosing another source URL, or none, starts Receive's bookkeeping afresh (protocol section 6). */
     fun setReceiveSourceUrl(url: String?) {
         val previous = getReceiveSourceUrl()
-        prefs.edit { if (url.isNullOrBlank()) remove(KEY_RECEIVE_SOURCE_URL) else putString(KEY_RECEIVE_SOURCE_URL, url) }
+        prefs.edit {
+            if (url.isNullOrBlank()) remove(KEY_RECEIVE_SOURCE_URL) else putString(KEY_RECEIVE_SOURCE_URL, url)
+            // What the old source answered says nothing about the new one.
+            putBoolean(KEY_RECEIVE_OUTDATED, false)
+            putString(KEY_RECEIVE_CONFIGURED, "")
+        }
         if (previous != url?.takeIf { it.isNotBlank() }) clearWriteBackState()
     }
 

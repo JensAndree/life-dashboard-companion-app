@@ -116,6 +116,14 @@ class WriteBackPayloadTest {
     }
 
     @Test
+    fun `more is read as a boolean and nothing else`() {
+        assertTrue((signed(response(more = true)) as WriteBackResponse.Accepted).more)
+        assertFalse((signed(response(more = false)) as WriteBackResponse.Accepted).more)
+        val asString = response().replace("\"more\": false", "\"more\": \"true\"")
+        assertFalse((signed(asString) as WriteBackResponse.Accepted).more)
+    }
+
+    @Test
     fun `a response to another request is rejected`() {
         assertEquals(WriteBackResponse.Rejected(WriteBackRejection.NOT_IN_REPLY), signed(response(inReplyTo = "sha256=" + "cd".repeat(32))))
     }

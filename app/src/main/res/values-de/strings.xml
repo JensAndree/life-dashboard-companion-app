@@ -67,7 +67,7 @@
     <string name="receive_enable_description">Die Life-Dashboard-Integration sendet die Entitäten, die du dort ausgewählt hast; jeder Typ unten braucht seine eigene Schreibberechtigung von Health Connect.</string>
     <string name="receive_needs_integration">Braucht die Life-Dashboard-Integration: kopple zuerst mit Home Assistant, damit es eine Webhook-Adresse und ein Signaturgeheimnis gibt.</string>
     <string name="receive_source">Quelle: %1$s</string>
-    <string name="receive_update_integration">Aktualisiere die Life-Dashboard-Integration, um Messwerte zu empfangen.</string>
+    <string name="receive_update_integration">Aktualisiere die Life-Dashboard-Integration, um Messwerte zu empfangen, oder prüfe, ob dieser Webhook wirklich der Integration gehört: die letzte Antwort enthielt kein Messwerte-Protokoll.</string>
     <string name="receive_no_types_yet">Die nächste Synchronisierung fragt Home Assistant, welche Typen es anbietet.</string>
     <string name="receive_types_chosen_in_ha">Welche Entitäten gesendet werden, wählst du in Home Assistant in den Optionen der Integration.</string>
     <string name="receive_older_measurements">Ältere Messwerte annehmen</string>

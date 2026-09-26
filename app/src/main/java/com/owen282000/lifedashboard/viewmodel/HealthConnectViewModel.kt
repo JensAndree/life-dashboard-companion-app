@@ -14,6 +14,7 @@ import com.owen282000.lifedashboard.MqttSection
 import com.owen282000.lifedashboard.ReceiveSettings
 import com.owen282000.lifedashboard.ReceiveStatus
 import com.owen282000.lifedashboard.SeriesResolution
+import com.owen282000.lifedashboard.SourceApps
 import com.owen282000.lifedashboard.SourceUrlChoice
 import com.owen282000.lifedashboard.SyncSchedule
 import com.owen282000.lifedashboard.WriteBackPayload
@@ -523,7 +524,7 @@ class HealthConnectViewModel(
             // Bounded like every Health Connect call: a warning is never worth a hang.
             withTimeoutOrNull(OTHER_SOURCES_TIMEOUT_MS) { ops.otherSourcesWriting(type) }
                 ?.firstOrNull()
-                ?.let { _toasts.tryEmit(UiMessage.OtherSourceWrites(it, type)) }
+                ?.let { _toasts.tryEmit(UiMessage.OtherSourceWrites(SourceApps.label(it), type)) }
         }
     }
 

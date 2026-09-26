@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -267,7 +268,7 @@ object WriteBackPayload {
             integrationVersion = announced.string("version"),
             configured = configured,
             readings = readings,
-            more = block["more"]?.let { (it as? JsonPrimitive)?.contentOrNull == "true" } ?: false
+            more = block["more"]?.let { (it as? JsonPrimitive)?.takeIf { p -> !p.isString }?.booleanOrNull } ?: false
         )
     }
 

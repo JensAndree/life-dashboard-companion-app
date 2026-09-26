@@ -67,7 +67,7 @@
     <string name="receive_enable_description">De Life Dashboard-integratie stuurt de entiteiten die je daar hebt gekozen; elk type hieronder heeft zijn eigen schrijftoestemming van Health Connect nodig.</string>
     <string name="receive_needs_integration">Vereist de Life Dashboard-integratie: koppel eerst met Home Assistant, zodat er een webhook-adres en een ondertekeningsgeheim zijn.</string>
     <string name="receive_source">Bron: %1$s</string>
-    <string name="receive_update_integration">Werk de Life Dashboard-integratie bij om metingen te ontvangen.</string>
+    <string name="receive_update_integration">Werk de Life Dashboard-integratie bij om metingen te ontvangen, of controleer of deze webhook wel van de integratie is: het laatste antwoord bevatte geen metingenprotocol.</string>
     <string name="receive_no_types_yet">De volgende synchronisatie vraagt Home Assistant welke types het aanbiedt.</string>
     <string name="receive_types_chosen_in_ha">Welke entiteiten worden verstuurd, kies je in Home Assistant, bij de opties van de integratie.</string>
     <string name="receive_older_measurements">Oudere metingen accepteren</string>

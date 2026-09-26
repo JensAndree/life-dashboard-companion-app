@@ -69,7 +69,7 @@
     <string name="receive_enable_description">The Life Dashboard integration sends the entities you chose there; each type below needs its own Health Connect write permission.</string>
     <string name="receive_needs_integration">Needs the Life Dashboard integration: pair with Home Assistant first, so there is a webhook address and a signing secret.</string>
     <string name="receive_source">Source: %1$s</string>
-    <string name="receive_update_integration">Update the Life Dashboard integration to receive measurements.</string>
+    <string name="receive_update_integration">Update the Life Dashboard integration to receive measurements, or check that this webhook is the integration\'s: its last answer carried no measurements protocol.</string>
     <string name="receive_no_types_yet">The next sync asks Home Assistant which types it offers.</string>
     <string name="receive_types_chosen_in_ha">Choose which entities are sent in Home Assistant, under the integration\'s options.</string>
     <string name="receive_older_measurements">Accept older measurements</string>
