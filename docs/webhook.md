@@ -552,6 +552,12 @@ Bounds, inclusive: weight 1 to 500 kg; height 0.3 to 2.8 m; body fat 1 to 80 %; 
 
 The `id` becomes the record's `clientRecordId` and the `version` its `clientRecordVersion`, which Health Connect scopes to the writing app. Sending the same reading again is therefore harmless (the app acknowledges it without a write once it knows the id at that version, and Health Connect ignores an equal or lower version anyway), and a correction with a higher version replaces the earlier record. The app cannot touch records other apps wrote. Records the app writes carry the app's own package as `source`, and the app leaves them out of its outgoing payloads and out of `deleted_records`, so what came from Home Assistant never goes back to it; `_diagnostics` counts them per type as `own_records_skipped`.
 
+Three edges an integration can expect:
+
+- **A lost answer from Health Connect.** When the insert succeeds but its answer arrives after the app's time budget, the records are in Health Connect while the app reports `hc_unavailable` and offers them again next round; the repeat is the same id at the same version and changes nothing. Until that repeat, the app does not yet know those records as its own, so a deletion of one of them in between would appear in `deleted_records` with a uuid the integration never handed out; ignore uuids you do not know.
+- **A forgotten ledger.** The app remembers the last 5000 readings it wrote, and forgets all of them when the source URL or the secret changes. A record beyond that is still the app's own in Health Connect (it never goes back out as a record), but a later deletion of it can appear in `deleted_records` for the same reason as above.
+- **Blood pressure above 200 mmHg.** The bounds the app checks (30 to 300 systolic, 10 to 250 diastolic) are wider than Health Connect's own constructor limits (20 to 200 systolic, 10 to 180 diastolic); a reading in between passes the app's validation and is then refused by Health Connect, which the app reports as `out_of_range` for that reading alone. Do not test the upper bounds with values above 200 and 180.
+
 ## Example backend integrations
 
 ### Simple Express.js server

@@ -25,7 +25,7 @@ If you install the app from the Google Play Store, the store itself may collect 
 - Your settings (endpoints, headers, sync intervals, enabled types). Secrets such as auth headers, HMAC signing keys and MQTT passwords are stored in encrypted storage backed by the Android keystore, and are excluded from Android's automatic cloud backup.
 - Sync watermarks, so each record is sent once.
 - With Receive on: a small ledger of the measurement ids the app has written and their versions, so a measurement Home Assistant sends again is not written twice. It is excluded from Android's backup and cleared when the address or the secret changes.
-- A delivery log (the Logs tab) with the last 100 deliveries. Payloads in this log are truncated unless you switch on "Keep full payloads". You can clear the log at any time.
+- A delivery log (the Logs tab) with the last 100 deliveries. Payloads in this log are truncated unless you switch on "Keep full payloads". For measurements received from Home Assistant the log keeps the entity id, the type, the measurement time and the outcome; the values only with "Keep full payloads". You can clear the log at any time.
 - An outbox of payloads that could not be delivered yet, so a sync survives a server being down. It is emptied once delivery succeeds.
 
 Uninstalling the app removes all of this. The settings export feature writes an encrypted file that only you can decrypt with the password you chose.
