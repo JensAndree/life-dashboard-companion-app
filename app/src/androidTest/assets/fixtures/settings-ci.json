@@ -1,0 +1,90 @@
+{
+    "version": 1,
+    "exported_at": "2026-09-27T00:00:00Z",
+    "app_version": "ci-fixture",
+    "health": {
+        "webhook_urls": [
+            "http://127.0.0.1:8765/api/webhook/ci-health",
+            "https://example.invalid/api/webhook/ci-second"
+        ],
+        "headers": {
+            "X-Api-Key": "ci-key-health",
+            "Cookie": "session=ci"
+        },
+        "signing_secret": "ci-secret-health",
+        "sync_interval_minutes": 30,
+        "sync_mode": "TIMES",
+        "sync_times": "07:30,19:00",
+        "sync_days": "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY",
+        "quiet_from": "23:00",
+        "quiet_to": "06:00"
+    },
+    "screen_time": {
+        "webhook_urls": [
+            "http://127.0.0.1:8765/api/webhook/ci-screen"
+        ],
+        "headers": {
+            "X-Api-Key": "ci-key-screen"
+        },
+        "signing_secret": "ci-secret-screen",
+        "sync_interval_minutes": 120,
+        "sync_mode": "INTERVAL",
+        "sync_times": "",
+        "sync_days": "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY",
+        "quiet_from": null,
+        "quiet_to": null
+    },
+    "mqtt": {
+        "shared": {
+            "host": "broker.example.invalid",
+            "port": 8883,
+            "use_tls": true,
+            "username": "ci-mqtt-user",
+            "password": "ci-mqtt-password"
+        },
+        "health_enabled": true,
+        "health_use_shared": true,
+        "health_base_topic": "lifedashboard-ci",
+        "health_own_broker": {
+            "host": "",
+            "port": 1883,
+            "use_tls": false,
+            "username": null,
+            "password": null
+        },
+        "screen_time_enabled": true,
+        "screen_time_use_shared": false,
+        "screen_time_base_topic": "screentime-ci",
+        "screen_time_own_broker": {
+            "host": "screen-broker.example.invalid",
+            "port": 1884,
+            "use_tls": false,
+            "username": "ci-screen-user",
+            "password": "ci-screen-password"
+        }
+    },
+    "options": {
+        "enabled_data_types": [
+            "HEART_RATE",
+            "STEPS",
+            "WEIGHT"
+        ],
+        "include_daily_totals": false,
+        "allow_http_webhooks": true,
+        "keep_full_payloads": true,
+        "screen_time_day_boundary_hour": 5,
+        "screen_time_use_day_boundary": false,
+        "failure_notification_threshold": 4,
+        "series_resolutions": {
+            "HEART_RATE": "FIVE_MINUTES"
+        },
+        "phone_name": "CI Phone",
+        "receive_enabled": true,
+        "receive_types": [
+            "weight",
+            "blood_pressure"
+        ],
+        "receive_older_measurements": true,
+        "receive_source_url": "http://127.0.0.1:8765/api/webhook/ci-health"
+    }
+}
