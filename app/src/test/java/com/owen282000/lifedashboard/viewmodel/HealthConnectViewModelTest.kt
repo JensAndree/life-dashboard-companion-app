@@ -141,6 +141,16 @@ class HealthConnectViewModelTest {
     }
 
     @Test
+    fun `a manual sync reloads the dashboard card`() = runTest {
+        val vm = vm()
+        vm.refreshPermissions()
+        vm.addUrl("https://example.org/hook")
+        val before = vm.state.value.refreshKey
+        vm.syncNow()
+        assertEquals(before + 1, vm.state.value.refreshKey)
+    }
+
+    @Test
     fun `sync now without permissions asks the launcher instead of syncing`() = runTest {
         val ops = FakeHealthOps(granted = emptySet())
         val vm = vm(ops = ops)

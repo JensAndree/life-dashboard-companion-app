@@ -61,13 +61,15 @@ import java.util.Date
  * totals. Everything is read-only and loads off the main thread.
  */
 @Composable
-fun DashboardCard() {
+fun DashboardCard(refreshKey: Any? = null) {
     val context = LocalContext.current
     var status by remember { mutableStateOf<SyncStatusStore.Status?>(null) }
     var stats by remember { mutableStateOf<LifetimeStats.Stats?>(null) }
     var stepsPerDay by remember { mutableStateOf<List<Long>>(emptyList()) }
 
-    LaunchedEffect(Unit) {
+    // Reloads after a manual sync ([refreshKey]); a sync that only received measurements
+    // also moves "Last sync", so this is where that shows.
+    LaunchedEffect(refreshKey) {
         status = SyncStatusStore.read(context, LogType.HEALTH_CONNECT)
         stats = LifetimeStats.read(context, LogType.HEALTH_CONNECT)
         try {

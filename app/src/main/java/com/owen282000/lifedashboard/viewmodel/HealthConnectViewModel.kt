@@ -37,6 +37,8 @@ data class HealthUiState(
     /** null until the first permission check has run. */
     val hasPermissions: Boolean? = null,
     val grantedPermissions: Set<String> = emptySet(),
+    /** Bumped after a manual sync so the dashboard card reloads, as on the Screen Time tab. */
+    val refreshKey: Int = 0,
     val includeDailyTotals: Boolean = false,
     val allowHttpWebhooks: Boolean = false,
     /** KeyChain alias of the client certificate (mTLS) presented to webhooks, null for none. */
@@ -365,7 +367,9 @@ class HealthConnectViewModel(
                     onFailure = { UiMessage.SyncFailed(it.message ?: "") }
                 )
                 // The sync may have learned which types the integration offers, or written some.
-                _state.update { it.copy(syncMessage = message, receiveStatus = settings.receiveStatus()) }
+                _state.update {
+                    it.copy(syncMessage = message, receiveStatus = settings.receiveStatus(), refreshKey = it.refreshKey + 1)
+                }
             } catch (e: Exception) {
                 _state.update { it.copy(syncMessage = UiMessage.SyncFailed(e.message ?: "")) }
             } finally {

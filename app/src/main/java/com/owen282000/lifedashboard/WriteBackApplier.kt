@@ -295,7 +295,13 @@ class WriteBackApplier(
         preferencesManager.setWriteBackLedger(ledger)
         preferencesManager.setWriteBackReport(preferencesManager.getWriteBackReport().merge(report))
         writtenTotal += written
-        if (written > 0) SyncStatusStore.recordWritten(context, written)
+        if (written > 0) {
+            SyncStatusStore.recordWritten(context, written)
+            // Measurements that came in are a sync as much as records that went out: the
+            // dashboard's "Last sync" moves, its count of records sent does not. A round that
+            // wrote nothing leaves it alone, as a sync without new data does.
+            SyncStatusStore.record(context, success = true, records = 0, source = LogType.HEALTH_CONNECT)
+        }
         // Nothing offered is not a failure and not a success worth a row either.
         if (accepted.readings.isNotEmpty()) {
             log(success = !roundFailed, written = written, lines = lines, error = null)

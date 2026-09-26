@@ -182,7 +182,7 @@ fun HealthConnectContent(
             }
         }
 
-        DashboardCard()
+        DashboardCard(refreshKey = state.refreshKey)
 
         // Keystore outage: secrets cannot be read or saved, so say so rather than let
         // syncs fail with unexplained auth errors.
