@@ -266,7 +266,7 @@
     <string name="onboarding_webhook_applied_screen">Für Bildschirmzeit</string>
     <string name="onboarding_webhook_desc">POST JSON an deinen eigenen Server oder dein Dashboard-Backend</string>
     <string name="onboarding_webhook_option">Webhook</string>
-    <string name="onboarding_welcome_body">Life Dashboard Companion sendet deine Health Connect- und Bildschirmzeitdaten an einen Ort, den du kontrollierst: dein eigenes Webhook-Backend oder Home Assistant über MQTT. Keine Cloud dazwischen. Drei kurze Fragen, und es läuft.</string>
+    <string name="onboarding_welcome_body">Life Dashboard Companion sendet deine Health Connect- und Bildschirmzeitdaten an einen Ort, den du kontrollierst: dein eigenes Webhook-Backend oder Home Assistant über MQTT. Mit der Home-Assistant-Integration geht es auch umgekehrt: Eine Waage oder ein Blutdruckmessgerät, das mit Home Assistant spricht, landet in Health Connect. Keine Cloud dazwischen. Drei kurze Fragen, und es läuft.</string>
     <string name="onboarding_welcome_title">Deine Gesundheitsdaten, dein Server</string>
 
     <!-- Redesigned main screens -->
@@ -292,7 +292,7 @@
     <!-- About screen -->
     <string name="about_title">Über</string>
     <string name="about_back">Zurück</string>
-    <string name="about_description">Sendet deine Health Connect- und Bildschirmzeitdaten an dein eigenes Webhook-Backend oder an Home Assistant über MQTT. Keine Cloud dazwischen.</string>
+    <string name="about_description">Sendet deine Health Connect- und Bildschirmzeitdaten an dein eigenes Webhook-Backend oder an Home Assistant über MQTT und kann Messwerte aus deinem eigenen Home Assistant zurück in Health Connect schreiben. Keine Cloud dazwischen.</string>
     <string name="about_privacy_title">Datenschutz und Sicherheit</string>
     <string name="about_backup_title">Sicherung und Wiederherstellung</string>
     <string name="about_f_steps">Schritte, Distanz, Kalorien</string>
@@ -315,7 +315,7 @@
     <string name="about_coffee">Spendier mir einen Kaffee</string>
     <string name="about_coffee_sub">Die App bleibt kostenlos und Open Source; ein Kaffee hält die Releases schnell</string>
     <string name="about_privacy_policy">Datenschutzerklärung</string>
-    <string name="about_privacy_policy_sub">Was die App liest, speichert und sendet</string>
+    <string name="about_privacy_policy_sub">Was die App liest, schreibt, speichert und sendet</string>
     <string name="about_licence">Lizenz</string>
     <string name="about_licence_sub">MIT · © 2025-2026 Owen Vogelaar</string>
     <string name="about_version">Version %1$s</string>

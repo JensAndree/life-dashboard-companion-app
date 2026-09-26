@@ -268,7 +268,7 @@
     <string name="onboarding_webhook_applied_screen">Used for Screen Time</string>
     <string name="onboarding_webhook_desc">POST JSON to your own server or dashboard backend</string>
     <string name="onboarding_webhook_option">Webhook</string>
-    <string name="onboarding_welcome_body">Life Dashboard Companion sends your Health Connect and screen time data to a place you control: your own webhook backend, or Home Assistant over MQTT. No cloud in between. Three quick questions and you are running.</string>
+    <string name="onboarding_welcome_body">Life Dashboard Companion sends your Health Connect and screen time data to a place you control: your own webhook backend, or Home Assistant over MQTT. With the Home Assistant integration it also works the other way: a scale or blood pressure monitor that talks to Home Assistant lands in Health Connect. No cloud in between. Three quick questions and you are running.</string>
     <string name="onboarding_welcome_title">Your health data, your server</string>
 
     <!-- Redesigned main screens -->
@@ -294,7 +294,7 @@
     <!-- About screen -->
     <string name="about_title">About</string>
     <string name="about_back">Back</string>
-    <string name="about_description">Sends your Health Connect and screen time data to your own webhook backend or to Home Assistant over MQTT. No cloud in between.</string>
+    <string name="about_description">Sends your Health Connect and screen time data to your own webhook backend or to Home Assistant over MQTT, and can bring measurements from your own Home Assistant back into Health Connect. No cloud in between.</string>
     <string name="about_privacy_title">Privacy &amp; Security</string>
     <string name="about_backup_title">Backup &amp; restore</string>
     <string name="about_f_steps">Steps, distance, calories</string>
@@ -317,7 +317,7 @@
     <string name="about_coffee">Buy me a coffee</string>
     <string name="about_coffee_sub">The app stays free and open source; a coffee keeps releases quick</string>
     <string name="about_privacy_policy">Privacy policy</string>
-    <string name="about_privacy_policy_sub">What the app reads, stores and sends</string>
+    <string name="about_privacy_policy_sub">What the app reads, writes, stores and sends</string>
     <string name="about_licence">Licence</string>
     <string name="about_licence_sub">MIT · © 2025-2026 Owen Vogelaar</string>
     <string name="about_version">Version %1$s</string>

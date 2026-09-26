@@ -266,7 +266,7 @@
     <string name="onboarding_webhook_applied_screen">Gebruikt voor Schermtijd</string>
     <string name="onboarding_webhook_desc">POST JSON naar je eigen server of dashboard-backend</string>
     <string name="onboarding_webhook_option">Webhook</string>
-    <string name="onboarding_welcome_body">Life Dashboard Companion stuurt je Health Connect- en schermtijddata naar een plek die jij beheert: je eigen webhook-backend, of Home Assistant via MQTT. Geen cloud ertussen. Drie korte vragen en je draait.</string>
+    <string name="onboarding_welcome_body">Life Dashboard Companion stuurt je Health Connect- en schermtijddata naar een plek die jij beheert: je eigen webhook-backend, of Home Assistant via MQTT. Met de Home Assistant-integratie werkt het ook andersom: een weegschaal of bloeddrukmeter die met Home Assistant praat, komt in Health Connect terecht. Geen cloud ertussen. Drie korte vragen en je draait.</string>
     <string name="onboarding_welcome_title">Jouw gezondheidsdata, jouw server</string>
 
     <!-- Redesigned main screens -->
@@ -292,7 +292,7 @@
     <!-- About screen -->
     <string name="about_title">Over</string>
     <string name="about_back">Terug</string>
-    <string name="about_description">Stuurt je Health Connect- en schermtijddata naar je eigen webhook-backend of naar Home Assistant via MQTT. Geen cloud ertussen.</string>
+    <string name="about_description">Stuurt je Health Connect- en schermtijddata naar je eigen webhook-backend of naar Home Assistant via MQTT, en kan metingen uit je eigen Home Assistant terug in Health Connect zetten. Geen cloud ertussen.</string>
     <string name="about_privacy_title">Privacy en beveiliging</string>
     <string name="about_backup_title">Back-up en herstel</string>
     <string name="about_f_steps">Stappen, afstand, calorieën</string>
@@ -315,7 +315,7 @@
     <string name="about_coffee">Trakteer me op koffie</string>
     <string name="about_coffee_sub">De app blijft gratis en open source; een koffie houdt de releases snel</string>
     <string name="about_privacy_policy">Privacybeleid</string>
-    <string name="about_privacy_policy_sub">Wat de app leest, opslaat en verstuurt</string>
+    <string name="about_privacy_policy_sub">Wat de app leest, schrijft, opslaat en verstuurt</string>
     <string name="about_licence">Licentie</string>
     <string name="about_licence_sub">MIT · © 2025-2026 Owen Vogelaar</string>
     <string name="about_version">Versie %1$s</string>
