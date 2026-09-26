@@ -53,6 +53,40 @@
     <string name="phone_name_placeholder">Optioneel</string>
 
     <!-- Ontvangen: metingen uit Home Assistant naar Health Connect -->
+    <string name="receive_title">Ontvangen</string>
+    <string name="receive_subtitle">Uit Home Assistant naar Health Connect</string>
+    <string name="receive_off">Uit</string>
+    <string name="receive_summary_written">%1$s · %2$s</string>
+    <plurals name="receive_written_today">
+        <item quantity="one">%1$d vandaag geschreven</item>
+        <item quantity="other">%1$d vandaag geschreven</item>
+    </plurals>
+    <string name="receive_enable">Metingen uit Home Assistant ontvangen</string>
+    <string name="receive_enable_description">De Life Dashboard-integratie stuurt de entiteiten die je daar hebt gekozen; elk type hieronder heeft zijn eigen schrijftoestemming van Health Connect nodig.</string>
+    <string name="receive_needs_integration">Vereist de Life Dashboard-integratie: koppel eerst met Home Assistant, zodat er een webhook-adres en een ondertekeningsgeheim zijn.</string>
+    <string name="receive_source">Bron: %1$s</string>
+    <string name="receive_update_integration">Werk de Life Dashboard-integratie bij om metingen te ontvangen.</string>
+    <string name="receive_no_types_yet">De volgende synchronisatie vraagt Home Assistant welke types het aanbiedt.</string>
+    <string name="receive_types_chosen_in_ha">Welke entiteiten worden verstuurd, kies je in Home Assistant, bij de opties van de integratie.</string>
+    <string name="receive_older_measurements">Oudere metingen accepteren</string>
+    <string name="receive_older_measurements_description">Schrijf ook metingen ouder dan 30 dagen, voor een geschiedenis die vanuit Home Assistant wordt gestuurd.</string>
+    <string name="receive_permission_needed">Geef toestemming om %1$s in Health Connect te schrijven. De metingen komen uit Home Assistant, van de entiteiten die je daar hebt gekozen. Er wordt niets geschreven totdat je het aanzet.</string>
+    <string name="receive_choose_source_title">Welke webhook is Home Assistant?</string>
+    <string name="receive_choose_source_body">Meer dan één adres lijkt op een Home Assistant-webhook. Metingen worden gelezen van het adres dat je kiest.</string>
+    <string name="receive_other_source_writes">%1$s schrijft %2$s al naar Health Connect. Het ook uit Home Assistant ontvangen geeft twee metingen.</string>
+    <string name="receive_synced_and_written">%1$s · %2$s</string>
+    <plurals name="receive_written_count">
+        <item quantity="one">%1$d naar Health Connect geschreven</item>
+        <item quantity="other">%1$d naar Health Connect geschreven</item>
+    </plurals>
+    <string name="logs_row_receive_title">Gezondheid · uit Home Assistant</string>
+    <plurals name="logs_row_written">
+        <item quantity="one">%1$s · %2$d geschreven</item>
+        <item quantity="other">%1$s · %2$d geschreven</item>
+    </plurals>
+    <string name="logs_written">Geschreven</string>
+    <string name="logs_skipped">Overgeslagen</string>
+    <string name="logs_receive_outcome_reason">%1$s (%2$s)</string>
     <string name="receive_failing_title">Metingen uit Home Assistant komen niet in Health Connect terecht</string>
     <plurals name="receive_failing_text">
         <item quantity="one">%1$d ronde mislukt. Bekijk de logs voor details.</item>

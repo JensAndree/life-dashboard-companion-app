@@ -145,6 +145,7 @@ fun HealthConnectContent(
     var scheduleExpanded by remember { mutableStateOf(false) }
     var resolutionExpanded by remember { mutableStateOf(false) }
     var webhookExpanded by remember { mutableStateOf(false) }
+    var receiveExpanded by remember { mutableStateOf(false) }
     var mqttExpanded by remember { mutableStateOf(false) }
     var advancedExpanded by remember { mutableStateOf(false) }
     var notificationsExpanded by remember { mutableStateOf(false) }
@@ -225,6 +226,19 @@ fun HealthConnectContent(
                 onAddHeader = actions::addHeader,
                 onRemoveHeader = actions::removeHeader,
                 onSecretChange = actions::setSecret,
+                onScanRequested = onScanRequested
+            )
+            GroupDivider()
+            ReceiveRow(
+                accent = accent,
+                receive = state.receive,
+                status = state.receiveStatus,
+                grantedPermissions = state.grantedPermissions,
+                expanded = receiveExpanded,
+                onToggle = { receiveExpanded = !receiveExpanded },
+                onEnabledChange = actions::setReceiveEnabled,
+                onToggleType = actions::toggleReceiveType,
+                onOlderChange = actions::setReceiveOlderMeasurements,
                 onScanRequested = onScanRequested
             )
             GroupDivider()
@@ -355,6 +369,39 @@ fun HealthConnectContent(
             },
             dismissButton = {
                 TextButton(onClick = actions::dismissPermissionPrompt) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
+    }
+
+    state.receivePermissionPrompt?.let { type ->
+        AlertDialog(
+            onDismissRequest = actions::dismissReceivePermissionPrompt,
+            title = { Text(stringResource(R.string.health_permission_required_title)) },
+            text = { Text(stringResource(R.string.receive_permission_needed, type.dataType.displayName)) },
+            confirmButton = {
+                TextButton(onClick = actions::requestReceivePermission) { Text(stringResource(R.string.common_grant), color = accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = actions::dismissReceivePermissionPrompt) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
+    }
+
+    state.receiveSourceChoice?.let { urls ->
+        AlertDialog(
+            onDismissRequest = actions::dismissReceiveSourceChoice,
+            title = { Text(stringResource(R.string.receive_choose_source_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.receive_choose_source_body))
+                    urls.forEach { url ->
+                        TextButton(onClick = { actions.chooseReceiveSource(url) }) { Text(url, color = accent) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = actions::dismissReceiveSourceChoice) { Text(stringResource(R.string.common_cancel)) }
             }
         )
     }

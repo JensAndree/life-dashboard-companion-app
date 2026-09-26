@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Share
@@ -44,9 +45,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.owen282000.lifedashboard.ExportManager
 import com.owen282000.lifedashboard.LogDestination
+import com.owen282000.lifedashboard.LogDirection
 import com.owen282000.lifedashboard.LogType
 import com.owen282000.lifedashboard.R
+import com.owen282000.lifedashboard.ReceiveLogLine
 import com.owen282000.lifedashboard.WebhookLog
+import com.owen282000.lifedashboard.WriteBackType
 import com.owen282000.lifedashboard.appPreferences
 import com.owen282000.lifedashboard.ui.theme.LogsPrimary
 import com.owen282000.lifedashboard.ui.theme.Success
@@ -182,10 +186,13 @@ private fun SyncStatsCard(logs: List<WebhookLog>) {
     val total = logs.size
     val successful = logs.count { it.success }
     val successRate = if (total > 0) (successful * 100) / total else 0
-    val totalRecords = logs.filter { it.success }.sumOf { it.recordCount ?: 0 }
+    // What went in from Home Assistant is not a delivery, so it stays out of the record total
+    // and the per-source ratio; its own count is in the Receive row.
+    val outgoing = logs.filter { it.direction != LogDirection.IN.name }
+    val totalRecords = outgoing.filter { it.success }.sumOf { it.recordCount ?: 0 }
     val lastSuccess = logs.filter { it.success }.maxByOrNull { it.timestamp }
-    val healthSyncs = logs.count { it.logType == LogType.HEALTH_CONNECT.name }
-    val healthSuccess = logs.count { it.logType == LogType.HEALTH_CONNECT.name && it.success }
+    val healthSyncs = outgoing.count { it.logType == LogType.HEALTH_CONNECT.name }
+    val healthSuccess = outgoing.count { it.logType == LogType.HEALTH_CONNECT.name && it.success }
     val screenSyncs = logs.count { it.logType == LogType.SCREEN_TIME.name }
     val screenSuccess = logs.count { it.logType == LogType.SCREEN_TIME.name && it.success }
 
@@ -219,22 +226,35 @@ private fun StatColumn(label: String, value: String, color: androidx.compose.ui.
 private fun LogRow(log: WebhookLog, accent: androidx.compose.ui.graphics.Color) {
     var expanded by remember(log.id) { mutableStateOf(false) }
     val isMqtt = log.destination == LogDestination.MQTT.name
-    val source = when (log.logType) {
-        LogType.HEALTH_CONNECT.name -> stringResource(R.string.logs_filter_health)
-        LogType.SCREEN_TIME.name -> stringResource(R.string.logs_filter_screen_time)
+    val isIncoming = log.direction == LogDirection.IN.name
+    val source = when {
+        isIncoming -> stringResource(R.string.logs_row_receive_title)
+        log.logType == LogType.HEALTH_CONNECT.name -> stringResource(R.string.logs_filter_health)
+        log.logType == LogType.SCREEN_TIME.name -> stringResource(R.string.logs_filter_screen_time)
         else -> stringResource(R.string.logs_filter_unknown)
     }
     val time = formatTimestamp(log.timestamp)
     val subtitle = when {
         log.recordCount == null -> time
+        isIncoming -> pluralStringResource(R.plurals.logs_row_written, log.recordCount, time, log.recordCount)
         isMqtt -> stringResource(R.string.logs_row_sensors, time, log.recordCount)
         else -> stringResource(R.string.logs_row_records, time, log.recordCount)
     }
-    val statusColor = if (log.success) Success else MaterialTheme.colorScheme.error
+    // A Receive round that wrote nothing is neither a success worth green nor a failure.
+    val skipped = isIncoming && log.success && (log.recordCount ?: 0) == 0
+    val statusColor = when {
+        !log.success -> MaterialTheme.colorScheme.error
+        skipped -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> Success
+    }
 
     Column {
         SettingRow(
-            icon = if (isMqtt) Icons.Outlined.Home else Icons.Outlined.Link,
+            icon = when {
+                isIncoming -> Icons.Outlined.Download
+                isMqtt -> Icons.Outlined.Home
+                else -> Icons.Outlined.Link
+            },
             accent = accent,
             title = source,
             subtitle = subtitle,
@@ -243,11 +263,19 @@ private fun LogRow(log: WebhookLog, accent: androidx.compose.ui.graphics.Color) 
             StatusPill(
                 label = when {
                     !log.success -> stringResource(R.string.logs_failed)
+                    skipped -> stringResource(R.string.logs_skipped)
+                    isIncoming -> stringResource(R.string.logs_written)
                     isMqtt -> stringResource(R.string.logs_published)
                     else -> stringResource(R.string.logs_delivered)
                 },
                 color = statusColor
             )
+        }
+        if (isIncoming) {
+            AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
+                ReceiveLogDetails(log)
+            }
+            return
         }
         AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
             Column(
@@ -309,6 +337,55 @@ private fun LogRow(log: WebhookLog, accent: androidx.compose.ui.graphics.Color) 
         }
     }
 }
+
+/**
+ * The readings of one Receive round: entity, type, value and unit (only when full payloads
+ * are kept), measurement time, outcome and reason. Never the secret or the signature; the
+ * line for a rejected response names the reason and nothing else.
+ */
+@Composable
+private fun ReceiveLogDetails(log: WebhookLog) {
+    val lines = remember(log.id) { ReceiveLogLine.decode(log.rawPayload) }
+    Column(
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(log.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!log.success && log.errorMessage != null) {
+            Text(log.errorMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        lines?.forEach { line ->
+            val typeName = line.type?.let { key -> WriteBackType.fromKey(key)?.dataType?.displayName ?: key }
+                ?: stringResource(R.string.logs_filter_unknown)
+            val value = line.value?.let { v ->
+                val number = if (line.diastolic != null) "${formatValue(v)}/${formatValue(line.diastolic)}" else formatValue(v)
+                "$number ${line.unit.orEmpty()}".trim()
+            }
+            val measured = line.time?.let { runCatching { formatTimestamp(java.time.Instant.parse(it).toEpochMilli()) }.getOrNull() }
+            val outcome = when (line.outcome) {
+                ReceiveLogLine.WRITTEN -> stringResource(R.string.logs_written)
+                ReceiveLogLine.SKIPPED -> stringResource(R.string.logs_skipped)
+                else -> stringResource(R.string.logs_failed)
+            }
+            val outcomeWithReason = line.reason?.let { stringResource(R.string.logs_receive_outcome_reason, outcome, it) } ?: outcome
+            Column {
+                Text(
+                    listOfNotNull(line.entity, typeName, value).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    listOfNotNull(measured, outcomeWithReason).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (line.outcome == ReceiveLogLine.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun formatValue(value: Double): String =
+    if (value == Math.rint(value)) value.toLong().toString() else String.format(Locale.getDefault(), "%.2f", value).trimEnd('0').trimEnd('.', ',')
 
 private fun formatTimestamp(timestamp: Long): String {
     val sdf = SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault())

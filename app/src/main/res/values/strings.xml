@@ -55,6 +55,40 @@
     <string name="phone_name_placeholder">Optional</string>
 
     <!-- Receive: measurements from Home Assistant into Health Connect -->
+    <string name="receive_title">Receive</string>
+    <string name="receive_subtitle">From Home Assistant into Health Connect</string>
+    <string name="receive_off">Off</string>
+    <string name="receive_summary_written">%1$s · %2$s</string>
+    <plurals name="receive_written_today">
+        <item quantity="one">%1$d written today</item>
+        <item quantity="other">%1$d written today</item>
+    </plurals>
+    <string name="receive_enable">Receive measurements from Home Assistant</string>
+    <string name="receive_enable_description">The Life Dashboard integration sends the entities you chose there; each type below needs its own Health Connect write permission.</string>
+    <string name="receive_needs_integration">Needs the Life Dashboard integration: pair with Home Assistant first, so there is a webhook address and a signing secret.</string>
+    <string name="receive_source">Source: %1$s</string>
+    <string name="receive_update_integration">Update the Life Dashboard integration to receive measurements.</string>
+    <string name="receive_no_types_yet">The next sync asks Home Assistant which types it offers.</string>
+    <string name="receive_types_chosen_in_ha">Choose which entities are sent in Home Assistant, under the integration\'s options.</string>
+    <string name="receive_older_measurements">Accept older measurements</string>
+    <string name="receive_older_measurements_description">Also write measurements older than 30 days, for a history sent from Home Assistant.</string>
+    <string name="receive_permission_needed">Grant permission to write %1$s into Health Connect. Measurements come from Home Assistant, from the entities you chose there. Nothing is written until you switch it on.</string>
+    <string name="receive_choose_source_title">Which webhook is Home Assistant?</string>
+    <string name="receive_choose_source_body">More than one address looks like a Home Assistant webhook. Measurements are read from the one you pick.</string>
+    <string name="receive_other_source_writes">%1$s already writes %2$s to Health Connect. Receiving it from Home Assistant too gives two readings.</string>
+    <string name="receive_synced_and_written">%1$s · %2$s</string>
+    <plurals name="receive_written_count">
+        <item quantity="one">%1$d written to Health Connect</item>
+        <item quantity="other">%1$d written to Health Connect</item>
+    </plurals>
+    <string name="logs_row_receive_title">Health · from Home Assistant</string>
+    <plurals name="logs_row_written">
+        <item quantity="one">%1$s · %2$d written</item>
+        <item quantity="other">%1$s · %2$d written</item>
+    </plurals>
+    <string name="logs_written">Written</string>
+    <string name="logs_skipped">Skipped</string>
+    <string name="logs_receive_outcome_reason">%1$s (%2$s)</string>
     <string name="receive_failing_title">Measurements from Home Assistant are not reaching Health Connect</string>
     <plurals name="receive_failing_text">
         <item quantity="one">%1$d round failed. Check the logs for details.</item>

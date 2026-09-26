@@ -53,6 +53,40 @@
     <string name="phone_name_placeholder">Optional</string>
 
     <!-- Empfangen: Messwerte aus Home Assistant nach Health Connect -->
+    <string name="receive_title">Empfangen</string>
+    <string name="receive_subtitle">Aus Home Assistant nach Health Connect</string>
+    <string name="receive_off">Aus</string>
+    <string name="receive_summary_written">%1$s · %2$s</string>
+    <plurals name="receive_written_today">
+        <item quantity="one">%1$d heute geschrieben</item>
+        <item quantity="other">%1$d heute geschrieben</item>
+    </plurals>
+    <string name="receive_enable">Messwerte aus Home Assistant empfangen</string>
+    <string name="receive_enable_description">Die Life-Dashboard-Integration sendet die Entitäten, die du dort ausgewählt hast; jeder Typ unten braucht seine eigene Schreibberechtigung von Health Connect.</string>
+    <string name="receive_needs_integration">Braucht die Life-Dashboard-Integration: kopple zuerst mit Home Assistant, damit es eine Webhook-Adresse und ein Signaturgeheimnis gibt.</string>
+    <string name="receive_source">Quelle: %1$s</string>
+    <string name="receive_update_integration">Aktualisiere die Life-Dashboard-Integration, um Messwerte zu empfangen.</string>
+    <string name="receive_no_types_yet">Die nächste Synchronisierung fragt Home Assistant, welche Typen es anbietet.</string>
+    <string name="receive_types_chosen_in_ha">Welche Entitäten gesendet werden, wählst du in Home Assistant in den Optionen der Integration.</string>
+    <string name="receive_older_measurements">Ältere Messwerte annehmen</string>
+    <string name="receive_older_measurements_description">Auch Messwerte schreiben, die älter als 30 Tage sind, für einen aus Home Assistant gesendeten Verlauf.</string>
+    <string name="receive_permission_needed">Erteile die Berechtigung, %1$s in Health Connect zu schreiben. Die Messwerte kommen aus Home Assistant, von den Entitäten, die du dort ausgewählt hast. Es wird nichts geschrieben, bis du es einschaltest.</string>
+    <string name="receive_choose_source_title">Welcher Webhook ist Home Assistant?</string>
+    <string name="receive_choose_source_body">Mehr als eine Adresse sieht wie ein Home-Assistant-Webhook aus. Messwerte werden von der Adresse gelesen, die du wählst.</string>
+    <string name="receive_other_source_writes">%1$s schreibt %2$s bereits nach Health Connect. Es zusätzlich aus Home Assistant zu empfangen ergibt zwei Messwerte.</string>
+    <string name="receive_synced_and_written">%1$s · %2$s</string>
+    <plurals name="receive_written_count">
+        <item quantity="one">%1$d nach Health Connect geschrieben</item>
+        <item quantity="other">%1$d nach Health Connect geschrieben</item>
+    </plurals>
+    <string name="logs_row_receive_title">Gesundheit · aus Home Assistant</string>
+    <plurals name="logs_row_written">
+        <item quantity="one">%1$s · %2$d geschrieben</item>
+        <item quantity="other">%1$s · %2$d geschrieben</item>
+    </plurals>
+    <string name="logs_written">Geschrieben</string>
+    <string name="logs_skipped">Übersprungen</string>
+    <string name="logs_receive_outcome_reason">%1$s (%2$s)</string>
     <string name="receive_failing_title">Messwerte aus Home Assistant kommen nicht in Health Connect an</string>
     <plurals name="receive_failing_text">
         <item quantity="one">%1$d Runde fehlgeschlagen. Details stehen in den Logs.</item>

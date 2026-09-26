@@ -11,6 +11,7 @@ import com.owen282000.lifedashboard.ScreenTimeManager
 import com.owen282000.lifedashboard.ScreenTimeSyncManager
 import com.owen282000.lifedashboard.ScreenTimeSyncResult
 import com.owen282000.lifedashboard.WebhookManager
+import com.owen282000.lifedashboard.WriteBackType
 
 /*
  * The side effects the tabs trigger (sync, preview, backfill, test ping, permission checks),
@@ -24,6 +25,9 @@ interface HealthOps {
     suspend fun preview(): Result<String>
     suspend fun backfill(days: Int, onProgress: (done: Int, total: Int) -> Unit): Result<Int>
     suspend fun testPing(webhook: WebhookDraft): Result<Unit>
+
+    /** Package names of other apps that wrote [type] to Health Connect in the last week (Receive, issue #62). */
+    suspend fun otherSourcesWriting(type: WriteBackType): List<String>
 }
 
 interface ScreenTimeOps {
@@ -56,6 +60,7 @@ class RealHealthOps(private val context: Context) : HealthOps {
 
     override suspend fun sync() = HealthSyncManager(context).performSync()
     override suspend fun preview() = HealthSyncManager(context).previewData()
+    override suspend fun otherSourcesWriting(type: WriteBackType) = HealthConnectManager(context).otherSourcesWriting(type)
     override suspend fun backfill(days: Int, onProgress: (Int, Int) -> Unit) =
         HealthSyncManager(context).performBackfill(days, onProgress)
 

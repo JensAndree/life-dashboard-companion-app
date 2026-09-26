@@ -2,6 +2,8 @@ package com.owen282000.lifedashboard.viewmodel
 
 import com.owen282000.lifedashboard.HealthDataType
 import com.owen282000.lifedashboard.HealthSyncResult
+import com.owen282000.lifedashboard.ReceiveStatus
+import com.owen282000.lifedashboard.WriteBackType
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -254,6 +256,146 @@ class HealthConnectViewModelTest {
         settings.storedPhoneName = "Zoë"
         vm.refreshSharedSettings()
         assertEquals("Zoë", vm.state.value.phoneName)
+    }
+
+    // Receive (issue #62)
+
+    private val haUrl = "http://homeassistant.local:8123/api/webhook/abc"
+    private val writeWeight = WriteBackType.WEIGHT.writePermission
+
+    private fun pairedSettings(vararg urls: String, secret: String = "s3cret") = FakeAppSettings(
+        health = HealthDraft(WebhookDraft(urls = urls.toList(), secret = secret), emptySet(), emptyMqtt())
+    )
+
+    @Test
+    fun `receive cannot go on without a Home Assistant webhook and a secret`() = runTest {
+        val noSecret = pairedSettings(haUrl, secret = "")
+        val vm = vm(noSecret)
+        val toasts = mutableListOf<UiMessage>()
+        val job = launch(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm.toasts.collect { toasts += it } }
+        vm.setReceiveEnabled(true)
+        assertEquals(UiMessage.ReceiveNeedsIntegration, toasts.last())
+        assertFalse(vm.state.value.receive.enabled)
+
+        val noIntegration = pairedSettings("https://grafana.example/hook")
+        val vm2 = vm(noIntegration)
+        val job2 = launch(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm2.toasts.collect { toasts += it } }
+        vm2.setReceiveEnabled(true)
+        assertEquals(UiMessage.ReceiveNeedsIntegration, toasts.last())
+        assertFalse(noIntegration.receive.enabled)
+        job.cancel(); job2.cancel()
+    }
+
+    @Test
+    fun `receive goes on with the one Home Assistant webhook as its source`() {
+        val settings = pairedSettings("https://grafana.example/hook", haUrl)
+        val vm = vm(settings)
+        vm.setReceiveEnabled(true)
+        assertTrue(settings.receive.enabled)
+        assertEquals(haUrl, settings.receive.sourceUrl)
+        assertEquals(haUrl, vm.state.value.receive.sourceUrl)
+        assertFalse("not an unsaved change", vm.state.value.hasChanges)
+
+        vm.setReceiveEnabled(false)
+        assertFalse(settings.receive.enabled)
+        assertEquals("the source stays chosen for next time", haUrl, settings.receive.sourceUrl)
+    }
+
+    @Test
+    fun `with several Home Assistant webhooks the user picks the source`() {
+        val other = "https://ha2.example/api/webhook/def"
+        val settings = pairedSettings(haUrl, other)
+        val vm = vm(settings)
+        vm.setReceiveEnabled(true)
+        assertEquals(listOf(haUrl, other), vm.state.value.receiveSourceChoice)
+        assertFalse(settings.receive.enabled)
+
+        vm.chooseReceiveSource(other)
+        assertNull(vm.state.value.receiveSourceChoice)
+        assertTrue(settings.receive.enabled)
+        assertEquals(other, settings.receive.sourceUrl)
+    }
+
+    @Test
+    fun `a type without its write permission asks for it and goes on once it is granted`() = runTest {
+        val settings = pairedSettings(haUrl)
+        val ops = FakeHealthOps(granted = setOf("android.permission.health.READ_WEIGHT"))
+        val vm = vm(settings, ops)
+        vm.refreshPermissions()
+        vm.setReceiveEnabled(true)
+
+        vm.toggleReceiveType(WriteBackType.WEIGHT, true)
+        assertEquals(WriteBackType.WEIGHT, vm.state.value.receivePermissionPrompt)
+        assertTrue(settings.receive.types.isEmpty())
+
+        val request = launch(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm.permissionRequests.first() }
+        vm.requestReceivePermission()
+        request.join()
+        assertNull(vm.state.value.receivePermissionPrompt)
+
+        // Refused in Health Connect's dialog: the switch stays off.
+        vm.refreshPermissions()
+        assertTrue(settings.receive.types.isEmpty())
+
+        // Asked again and granted this time: the switch goes on by itself on the next check.
+        vm.toggleReceiveType(WriteBackType.WEIGHT, true)
+        vm.requestReceivePermission()
+        ops.granted = ops.granted + writeWeight
+        vm.refreshPermissions()
+        assertEquals(setOf(WriteBackType.WEIGHT), settings.receive.types)
+        assertEquals(setOf(WriteBackType.WEIGHT), vm.state.value.receive.types)
+
+        vm.toggleReceiveType(WriteBackType.WEIGHT, false)
+        assertTrue(settings.receive.types.isEmpty())
+    }
+
+    @Test
+    fun `a type with its permission goes on at once and warns when another app already writes it`() = runTest {
+        val settings = pairedSettings(haUrl)
+        val ops = FakeHealthOps(granted = setOf(writeWeight), otherSources = listOf("com.xiaomi.hm.health"))
+        val vm = vm(settings, ops)
+        vm.refreshPermissions()
+        val toasts = mutableListOf<UiMessage>()
+        val job = launch(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm.toasts.collect { toasts += it } }
+
+        vm.toggleReceiveType(WriteBackType.WEIGHT, true)
+        assertNull(vm.state.value.receivePermissionPrompt)
+        assertEquals(setOf(WriteBackType.WEIGHT), settings.receive.types)
+        assertEquals(UiMessage.OtherSourceWrites("com.xiaomi.hm.health", WriteBackType.WEIGHT), toasts.last())
+
+        vm.setReceiveOlderMeasurements(true)
+        assertTrue(settings.receive.olderMeasurements)
+        assertTrue(vm.state.value.receive.olderMeasurements)
+        job.cancel()
+    }
+
+    @Test
+    fun `the sync line says what was written to Health Connect`() = runTest {
+        val ops = FakeHealthOps(syncResult = Result.success(HealthSyncResult.Success(mapOf(HealthDataType.STEPS to 12), written = 2)))
+        val vm = vm(ops = ops)
+        vm.addUrl("https://example.org/hook")
+        vm.syncNow()
+        assertEquals(UiMessage.SyncedRecordsWritten(12, 2), vm.state.value.syncMessage)
+
+        val nothingWritten = vm(ops = FakeHealthOps(syncResult = Result.success(HealthSyncResult.Success(mapOf(HealthDataType.STEPS to 12)))))
+        nothingWritten.addUrl("https://example.org/hook")
+        nothingWritten.syncNow()
+        assertEquals(UiMessage.SyncedRecords(12), nothingWritten.state.value.syncMessage)
+    }
+
+    @Test
+    fun `what the integration reported is re-read after a sync and a reload`() = runTest {
+        val settings = pairedSettings(haUrl)
+        val vm = vm(settings)
+        vm.addUrl("https://example.org/hook")
+        settings.status = ReceiveStatus(configured = listOf("weight", "blood_pressure"), integrationOutdated = false, writtenToday = 3)
+        vm.syncNow()
+        assertEquals(listOf("weight", "blood_pressure"), vm.state.value.receiveStatus.configured)
+        assertEquals(3, vm.state.value.receiveStatus.writtenToday)
+
+        settings.status = ReceiveStatus(integrationOutdated = true)
+        vm.reloadFromSettings()
+        assertTrue(vm.state.value.receiveStatus.integrationOutdated)
     }
 
     @Test

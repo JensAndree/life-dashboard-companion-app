@@ -11,8 +11,13 @@ import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType
 import com.owen282000.lifedashboard.HealthSyncResult
 import com.owen282000.lifedashboard.MqttSection
+import com.owen282000.lifedashboard.ReceiveSettings
+import com.owen282000.lifedashboard.ReceiveStatus
 import com.owen282000.lifedashboard.SeriesResolution
+import com.owen282000.lifedashboard.SourceUrlChoice
 import com.owen282000.lifedashboard.SyncSchedule
+import com.owen282000.lifedashboard.WriteBackPayload
+import com.owen282000.lifedashboard.WriteBackType
 import com.owen282000.lifedashboard.appPreferences
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,7 +56,14 @@ data class HealthUiState(
     val exportJson: String? = null,
     /** A data type whose toggle needs a permission grant first. */
     val permissionPrompt: HealthDataType? = null,
-    val backfillDialog: Boolean = false
+    val backfillDialog: Boolean = false,
+    /** Receive (issue #62): the stored switches, what the integration reported, and the two prompts. */
+    val receive: ReceiveSettings = ReceiveSettings(),
+    val receiveStatus: ReceiveStatus = ReceiveStatus(),
+    /** A Receive type whose write permission has to be granted before its switch goes on. */
+    val receivePermissionPrompt: WriteBackType? = null,
+    /** More than one webhook looks like the integration's; the user picks the source. */
+    val receiveSourceChoice: List<String>? = null
 ) {
     val hasChanges: Boolean get() = draft.differsFrom(saved)
     val hasAnyPermission: Boolean get() = grantedPermissions.isNotEmpty()
@@ -98,6 +110,15 @@ interface HealthActions {
     fun backfill(days: Int)
     fun requestAllPermissions()
     fun requestPermission(permission: String)
+
+    // Receive (issue #62). Applied at once, like the other settings that are not part of the draft.
+    fun setReceiveEnabled(enabled: Boolean)
+    fun toggleReceiveType(type: WriteBackType, enabled: Boolean)
+    fun setReceiveOlderMeasurements(enabled: Boolean)
+    fun chooseReceiveSource(url: String)
+    fun dismissReceiveSourceChoice()
+    fun requestReceivePermission()
+    fun dismissReceivePermissionPrompt()
 }
 
 class HealthConnectViewModel(
@@ -117,11 +138,20 @@ class HealthConnectViewModel(
                 failureNotificationsEnabled = settings.failureNotificationsEnabled(),
                 failureThreshold = settings.failureThreshold(),
                 secretsUnavailable = settings.secretsUnavailable,
-                mqttLastStatus = settings.lastMqttStatus(MqttSection.HEALTH)
+                mqttLastStatus = settings.lastMqttStatus(MqttSection.HEALTH),
+                receive = settings.receiveSettings(),
+                receiveStatus = settings.receiveStatus()
             )
         }
     )
     val state: StateFlow<HealthUiState> = _state.asStateFlow()
+
+    /**
+     * The Receive type whose write permission was just asked for. The grant happens in Health
+     * Connect's own UI, so the switch goes on in [refreshPermissions] once the permission is
+     * there, and stays off when it is not: a refused permission means off.
+     */
+    private var pendingReceiveType: WriteBackType? = null
 
     /** One-shot messages the screen shows as toasts. */
     private val _toasts = MutableSharedFlow<UiMessage>(extraBufferCapacity = 8)
@@ -159,6 +189,11 @@ class HealthConnectViewModel(
             }
             val granted = ops.grantedPermissions()
             _state.update { it.copy(availability = availability, hasPermissions = granted.isNotEmpty(), grantedPermissions = granted) }
+
+            pendingReceiveType?.let { type ->
+                pendingReceiveType = null
+                if (type.writePermission in granted) enableReceiveType(type)
+            }
 
             // A fresh install with permissions already granted: pre-select the granted types.
             val current = _state.value
@@ -275,7 +310,9 @@ class HealthConnectViewModel(
                 includeDailyTotals = settings.includeDailyTotals(),
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
                 clientCertAlias = settings.clientCertAlias(),
-                phoneName = settings.phoneName()
+                phoneName = settings.phoneName(),
+                receive = settings.receiveSettings(),
+                receiveStatus = settings.receiveStatus()
             )
         }
     }
@@ -307,13 +344,17 @@ class HealthConnectViewModel(
                     onSuccess = { result ->
                         when (result) {
                             is HealthSyncResult.NoData -> UiMessage.NoNewData
-                            is HealthSyncResult.Success -> UiMessage.SyncedRecords(result.syncCounts.values.sum())
+                            is HealthSyncResult.Success -> {
+                                val count = result.syncCounts.values.sum()
+                                if (result.written > 0) UiMessage.SyncedRecordsWritten(count, result.written) else UiMessage.SyncedRecords(count)
+                            }
                             is HealthSyncResult.Queued -> UiMessage.QueuedRecords(result.recordCount)
                         }
                     },
                     onFailure = { UiMessage.SyncFailed(it.message ?: "") }
                 )
-                _state.update { it.copy(syncMessage = message) }
+                // The sync may have learned which types the integration offers, or written some.
+                _state.update { it.copy(syncMessage = message, receiveStatus = settings.receiveStatus()) }
             } catch (e: Exception) {
                 _state.update { it.copy(syncMessage = UiMessage.SyncFailed(e.message ?: "")) }
             } finally {
@@ -413,6 +454,86 @@ class HealthConnectViewModel(
     override fun requestPermission(permission: String) {
         _permissionRequests.tryEmit(setOf(permission))
     }
+
+    // ==================== Receive (issue #62) ====================
+
+    /**
+     * Switching Receive on needs the integration: a webhook URL that looks like a Home
+     * Assistant one, and a signing secret to verify its answers with. The saved section is
+     * what counts, since that is what the sync runs with. One candidate is taken; several
+     * are offered as a choice; none, or no secret, is explained and the switch stays off.
+     */
+    override fun setReceiveEnabled(enabled: Boolean) {
+        if (!enabled) {
+            settings.setReceiveEnabled(false)
+            _state.update { it.copy(receive = settings.receiveSettings()) }
+            return
+        }
+        val saved = _state.value.saved.webhook
+        if (saved.secret.isBlank()) {
+            _toasts.tryEmit(UiMessage.ReceiveNeedsIntegration)
+            return
+        }
+        when (val choice = WriteBackPayload.sourceUrlChoice(saved.urls)) {
+            SourceUrlChoice.None -> _toasts.tryEmit(UiMessage.ReceiveNeedsIntegration)
+            is SourceUrlChoice.One -> enableReceiveWith(choice.url)
+            is SourceUrlChoice.Several -> _state.update { it.copy(receiveSourceChoice = choice.urls) }
+        }
+    }
+
+    override fun chooseReceiveSource(url: String) {
+        _state.update { it.copy(receiveSourceChoice = null) }
+        enableReceiveWith(url)
+    }
+
+    override fun dismissReceiveSourceChoice() = _state.update { it.copy(receiveSourceChoice = null) }
+
+    private fun enableReceiveWith(url: String) {
+        settings.setReceiveSourceUrl(url)
+        settings.setReceiveEnabled(true)
+        _state.update { it.copy(receive = settings.receiveSettings()) }
+    }
+
+    /**
+     * A type goes on only with its write permission in hand; without it the prompt asks for
+     * that one permission and the switch waits for the answer. Switching off needs nothing.
+     */
+    override fun toggleReceiveType(type: WriteBackType, enabled: Boolean) {
+        if (!enabled) {
+            settings.setReceiveTypes(_state.value.receive.types - type)
+            _state.update { it.copy(receive = settings.receiveSettings()) }
+            return
+        }
+        if (type.writePermission !in _state.value.grantedPermissions) {
+            _state.update { it.copy(receivePermissionPrompt = type) }
+            return
+        }
+        enableReceiveType(type)
+    }
+
+    private fun enableReceiveType(type: WriteBackType) {
+        settings.setReceiveTypes(_state.value.receive.types + type)
+        _state.update { it.copy(receive = settings.receiveSettings()) }
+        // Two readings a day is the usual surprise: the scale's own app already writes to
+        // Health Connect, and now Home Assistant does too. Said once, when the switch goes on.
+        viewModelScope.launch {
+            ops.otherSourcesWriting(type).firstOrNull()?.let { _toasts.tryEmit(UiMessage.OtherSourceWrites(it, type)) }
+        }
+    }
+
+    override fun setReceiveOlderMeasurements(enabled: Boolean) {
+        settings.setReceiveOlderMeasurements(enabled)
+        _state.update { it.copy(receive = settings.receiveSettings()) }
+    }
+
+    override fun requestReceivePermission() {
+        val type = _state.value.receivePermissionPrompt ?: return
+        pendingReceiveType = type
+        _state.update { it.copy(receivePermissionPrompt = null) }
+        _permissionRequests.tryEmit(setOf(type.writePermission))
+    }
+
+    override fun dismissReceivePermissionPrompt() = _state.update { it.copy(receivePermissionPrompt = null) }
 
     companion object {
         fun factory(context: Context): ViewModelProvider.Factory = viewModelFactory {

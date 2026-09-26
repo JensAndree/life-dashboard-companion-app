@@ -73,7 +73,8 @@ internal class FakeHealthOps(
     var granted: Set<String> = setOf("android.permission.health.READ_STEPS"),
     var syncResult: Result<HealthSyncResult> = Result.success(HealthSyncResult.Success(mapOf(HealthDataType.STEPS to 12))),
     var previewResult: Result<String> = Result.success("{}"),
-    var pingResult: Result<Unit> = Result.success(Unit)
+    var pingResult: Result<Unit> = Result.success(Unit),
+    var otherSources: List<String> = emptyList()
 ) : HealthOps {
     var syncs = 0
     override suspend fun availability() = availability
@@ -85,6 +86,7 @@ internal class FakeHealthOps(
         return Result.success(days)
     }
     override suspend fun testPing(webhook: WebhookDraft) = pingResult
+    override suspend fun otherSourcesWriting(type: WriteBackType) = otherSources
 }
 
 internal class FakeScreenTimeOps(

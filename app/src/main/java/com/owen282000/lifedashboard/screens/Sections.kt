@@ -115,6 +115,13 @@ fun UiMessage.text(res: Resources): String = when (this) {
     is UiMessage.PingFailedWith -> res.getString(R.string.health_test_ping_failed_with_reason, reason)
     is UiMessage.BackfillComplete -> res.getQuantityString(R.plurals.health_backfill_complete, count, count)
     UiMessage.BackfillNeedsWebhook -> res.getString(R.string.health_backfill_needs_webhook)
+    is UiMessage.SyncedRecordsWritten -> res.getString(
+        R.string.receive_synced_and_written,
+        res.getQuantityString(R.plurals.health_synced_records, count, count),
+        res.getQuantityString(R.plurals.receive_written_count, written, written)
+    )
+    UiMessage.ReceiveNeedsIntegration -> res.getString(R.string.receive_needs_integration)
+    is UiMessage.OtherSourceWrites -> res.getString(R.string.receive_other_source_writes, source, type.dataType.displayName)
 }
 
 /** The line under the sync actions: the outcome of the last sync, red when it failed. */

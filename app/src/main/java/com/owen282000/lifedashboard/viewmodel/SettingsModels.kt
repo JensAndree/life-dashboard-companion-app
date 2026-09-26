@@ -7,6 +7,7 @@ import com.owen282000.lifedashboard.QuietWindow
 import com.owen282000.lifedashboard.SeriesResolution
 import com.owen282000.lifedashboard.SyncMode
 import com.owen282000.lifedashboard.SyncSchedule
+import com.owen282000.lifedashboard.WriteBackType
 import java.time.DayOfWeek
 import java.time.LocalTime
 
@@ -210,6 +211,11 @@ sealed interface UiMessage {
     data class PingFailedWith(val reason: String) : UiMessage
     data class BackfillComplete(val count: Int) : UiMessage
     data object BackfillNeedsWebhook : UiMessage
+
+    /** Receive (issue #62): the sync line when something was written, and the two things that stop a switch. */
+    data class SyncedRecordsWritten(val count: Int, val written: Int) : UiMessage
+    data object ReceiveNeedsIntegration : UiMessage
+    data class OtherSourceWrites(val source: String, val type: WriteBackType) : UiMessage
 
     /** True for the messages the sync line paints red. */
     val isFailure: Boolean
