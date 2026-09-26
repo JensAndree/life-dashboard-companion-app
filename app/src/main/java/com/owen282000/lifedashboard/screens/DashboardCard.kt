@@ -77,6 +77,9 @@ fun DashboardCard(refreshKey: Any? = null) {
             stepsPerDay = HealthConnectManager(context)
                 .readDailyTotals(days = 6, enabledTypes = enabled)
                 .mapNotNull { it.steps }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // A newer refreshKey or a left tab cancels this load; let the cancellation through.
+            throw e
         } catch (e: Exception) {
             // Health Connect unavailable or no permission; the sparkline simply hides.
         }

@@ -45,6 +45,9 @@ class SyncStatusWidget : GlanceAppWidget() {
         suspend fun updateAll(context: Context) {
             try {
                 SyncStatusWidget().updateAll(context)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // A stopped worker or a left screen must stop here, not carry on as if refreshed.
+                throw e
             } catch (e: Exception) {
                 // Widget may not be placed; never fail a sync over a widget refresh
             }
