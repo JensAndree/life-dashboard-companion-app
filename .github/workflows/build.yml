@@ -77,3 +77,67 @@ jobs:
           name: debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+  # The sync path on a real Android runtime: Health Connect, the webhook receiver, the outbox,
+  # Receive, WorkManager in test mode. Same script as locally (docs/building.md), on an
+  # emulator named like the local AVD so the script's device check holds here too.
+  instrumented:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # full history so Gradle can derive the version from git tags
+
+      - name: Set up JDK
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      # Built before the emulator starts: a heavy Gradle build next to the emulator is what
+      # makes QEMU hang on the free runners.
+      - name: Build the APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleDebugAndroidTest
+          ./gradlew --stop
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Every line of `script` is its own shell and the emulator is killed right after, so the
+      # whole run, reports included, is one line.
+      - name: Run the suite on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          avd-name: ldc-instrumented
+          disk-size: 4096M
+          disable-animations: true
+          script: ./scripts/instrumented.sh --ci
+
+      - name: Upload the JUnit report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: instrumented-junit
+          path: build/instrumented/junit.xml
+          retention-days: 30
+
+      - name: Upload logcat and evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: instrumented-evidence
+          path: build/instrumented/
+          retention-days: 14
