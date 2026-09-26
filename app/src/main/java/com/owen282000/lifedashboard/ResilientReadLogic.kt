@@ -59,6 +59,30 @@ object ResilientReadLogic {
     }
 
     /**
+     * Splits records that are new since the watermark into the ones this app wrote itself and
+     * the rest (Receive, issue #62). What the app wrote came from Home Assistant; sending it
+     * back would be an echo. [isOwn] compares the record's data origin with the app's package.
+     */
+    fun <T> partitionOwn(records: List<T>, isOwn: (T) -> Boolean): Pair<List<T>, List<T>> =
+        records.partition(isOwn)
+
+    /**
+     * The watermark to store after a read: the newest modification time of the delivered
+     * batch, and of the skipped own records too when the type was not capped. A skipped own
+     * record would otherwise stay above the watermark and be read and counted again on every
+     * sync for the whole lookback window; and when nothing was held back by the cap, every
+     * foreign record older than the newest own one has been delivered, so advancing past it
+     * skips nothing. When the type was capped the own records are ignored: a foreign record
+     * held back by the cap could sit between the delivered batch and the newest own record,
+     * and moving past it would lose it. Null when there is nothing to advance to.
+     */
+    fun <T> watermarkAfter(delivered: List<T>, own: List<T>, capped: Boolean, timeOf: (T) -> Instant): Instant? =
+        listOfNotNull(
+            delivered.maxOfOrNull(timeOf),
+            if (capped) null else own.maxOfOrNull(timeOf)
+        ).maxOrNull()
+
+    /**
      * Reads a window via [read], falling back to recursive bisection when the reader throws
      * "startTime must be before endTime". Some source apps (e.g. Zepp for Amazfit devices) write
      * interval records with startTime == endTime; the Health Connect client rejects such a record

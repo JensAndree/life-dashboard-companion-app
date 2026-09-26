@@ -329,32 +329,18 @@ class HealthConnectManager(private val context: Context) {
     }
 
     /**
-     * Splits records that are new since the watermark into the ones this app wrote itself and
-     * the rest. Records the app wrote came from Home Assistant through Receive (issue #62);
-     * sending them back would be an echo, and the receiver would hold a second copy of every
-     * measurement under a different uuid. Health Connect sets dataOrigin to the writing
+     * The own-record rules of Receive (issue #62), see [ResilientReadLogic.partitionOwn] and
+     * [ResilientReadLogic.watermarkAfter]. Health Connect sets dataOrigin to the writing
      * package and it cannot be forged, so the package name is the whole test; there is no
      * setting, because nobody wants their own measurements returned to them.
      */
     private fun <T : Record> ownRecordsPartition(records: List<T>): Pair<List<T>, List<T>> {
         val own = context.packageName
-        return records.partition { it.metadata.dataOrigin.packageName == own }
+        return ResilientReadLogic.partitionOwn(records) { it.metadata.dataOrigin.packageName == own }
     }
 
-    /**
-     * The watermark to store after a read: the newest modification time of the delivered
-     * batch, and of the skipped own records too when the type was not capped. Skipping an own
-     * record leaves it above the watermark, so without this it would be counted again on every
-     * sync; and when nothing was held back by the cap, every foreign record older than the
-     * newest own one has been delivered, so advancing past it skips nothing. When the type
-     * was capped the own records are ignored: a foreign record held back by the cap could sit
-     * between the delivered batch and the newest own record, and moving past it would lose it.
-     */
     private fun <T : Record> watermarkFor(delivered: List<T>, own: List<T>, capped: Boolean): Instant? =
-        listOfNotNull(
-            delivered.maxOfOrNull { it.metadata.lastModifiedTime },
-            if (capped) null else own.maxOfOrNull { it.metadata.lastModifiedTime }
-        ).maxOrNull()
+        ResilientReadLogic.watermarkAfter(delivered, own, capped) { it.metadata.lastModifiedTime }
 
     /**
      * Deduplicated per-day totals for the last [days] full days plus today, computed with the

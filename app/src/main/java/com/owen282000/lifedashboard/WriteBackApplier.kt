@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 import java.util.UUID
@@ -77,8 +78,26 @@ class WriteBackApplier(
 
     private suspend fun requested(): Set<WriteBackType> {
         requestedTypes?.let { return it }
-        val granted = withTimeoutOrNull(PERMISSION_TIMEOUT_MS) { healthConnectManager.grantedWriteTypes() } ?: emptySet()
+        // A type is only ever switched on with its permission in hand, so the switched-on set
+        // is the last known answer when Health Connect does not give one now. A type whose
+        // permission was revoked since is then asked for once more, and refused at write time
+        // by a real answer, which is what the integration needs to hear.
+        val granted = grantedNow() ?: settings.types
         return (settings.types intersect granted).also { requestedTypes = it }
+    }
+
+    /**
+     * The types whose write permission Health Connect confirms right now, or null when it
+     * did not answer in time or at all. Null is not "nothing granted": a dozing phone can
+     * leave the permission lookup hanging, and reporting permission_denied on that would
+     * make the integration drop every reading for good over a hiccup.
+     */
+    private suspend fun grantedNow(): Set<WriteBackType>? = try {
+        withTimeoutOrNull(PERMISSION_TIMEOUT_MS) { healthConnectManager.grantedWriteTypes() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     /**
@@ -106,7 +125,8 @@ class WriteBackApplier(
         val response = outcome.getOrNull()?.sourceResponse
         if (response == null) {
             // The source URL did not accept the request: nothing to read, nothing to ack away.
-            SyncFailureNotifier.recordReceiveResult(context, success = false)
+            // The webhook streak already counts that failure; counting it here too would make
+            // one unreachable Home Assistant two notifications.
             return WriteBackRound()
         }
         preferencesManager.setWriteBackReport(preferencesManager.getWriteBackReport().without(sentReportOf(sent)))
@@ -152,7 +172,29 @@ class WriteBackApplier(
     private suspend fun apply(accepted: WriteBackResponse.Accepted): WriteBackRound {
         val stepStart = System.currentTimeMillis()
         val requested = requested()
-        val granted = withTimeoutOrNull(PERMISSION_TIMEOUT_MS) { healthConnectManager.grantedWriteTypes() } ?: emptySet()
+        val granted = grantedNow()
+        if (granted == null) {
+            // No answer from Health Connect is hc_unavailable for everything offered: the
+            // integration keeps the readings and offers them again next round. Only a real
+            // answer that lacks a type may turn into permission_denied.
+            val ids = accepted.readings.mapNotNull { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull }
+            if (ids.isNotEmpty()) {
+                preferencesManager.setWriteBackReport(
+                    preferencesManager.getWriteBackReport()
+                        .merge(WriteBackReport(failed = ids.map { FailedReading(it, WriteBackFailure.HC_UNAVAILABLE.code) }))
+                )
+                log(
+                    success = false,
+                    written = 0,
+                    lines = ids.map {
+                        ReceiveLogLine(entity = it.substringBeforeLast('@'), type = null, outcome = ReceiveLogLine.FAILED, reason = WriteBackFailure.HC_UNAVAILABLE.code)
+                    },
+                    error = "Receive: Health Connect did not answer the permission check"
+                )
+                SyncFailureNotifier.recordReceiveResult(context, success = false)
+            }
+            return WriteBackRound(written = 0, more = accepted.more)
+        }
         val now = Instant.now()
         val keepValues = preferencesManager.keepFullPayloads()
 

@@ -112,4 +112,46 @@ class ResilientReadLogicTest {
         }
         assertEquals("some other validation error", boom.message)
     }
+
+    // Own records (Receive, issue #62): left out of the payload, and the watermark moves past them
+
+    private data class Stamped(val id: String, val modified: Instant, val own: Boolean)
+
+    @Test
+    fun `an own record is left out and lies below the watermark after one sync`() {
+        val watermark = base
+        val ownRecord = Stamped("ha-weight", base.plus(Duration.ofHours(2)), own = true)
+        val fresh = listOf(ownRecord).filter { it.modified > watermark }
+        val (own, foreign) = ResilientReadLogic.partitionOwn(fresh) { it.own }
+        assertEquals(listOf(ownRecord), own)
+        assertTrue(foreign.isEmpty())
+
+        val next = ResilientReadLogic.watermarkAfter(foreign, own, capped = false) { it.modified }
+        assertEquals(ownRecord.modified, next)
+        assertTrue(
+            "after the watermark is stored the own record is not new any more",
+            listOf(ownRecord).none { it.modified > next!! }
+        )
+    }
+
+    @Test
+    fun `the watermark takes the newer of the delivered batch and the own records`() {
+        val delivered = listOf(Stamped("watch", base.plus(Duration.ofHours(1)), own = false))
+        val own = listOf(Stamped("ha", base.plus(Duration.ofHours(3)), own = true))
+        assertEquals(base.plus(Duration.ofHours(3)), ResilientReadLogic.watermarkAfter(delivered, own, capped = false) { it.modified })
+        assertEquals(base.plus(Duration.ofHours(1)), ResilientReadLogic.watermarkAfter(delivered, emptyList(), capped = false) { it.modified })
+        assertEquals(null, ResilientReadLogic.watermarkAfter(emptyList<Stamped>(), emptyList(), capped = false) { it.modified })
+    }
+
+    @Test
+    fun `a capped type ignores its own records so a held-back foreign record is not skipped`() {
+        // Foreign records at 1h and 4h, the cap delivered only the 1h one; an own record at 3h
+        // must not move the watermark past the 4h record still waiting behind the cap.
+        val delivered = listOf(Stamped("watch-1", base.plus(Duration.ofHours(1)), own = false))
+        val own = listOf(Stamped("ha", base.plus(Duration.ofHours(3)), own = true))
+        val heldBack = Stamped("watch-2", base.plus(Duration.ofHours(4)), own = false)
+        val next = ResilientReadLogic.watermarkAfter(delivered, own, capped = true) { it.modified }
+        assertEquals(base.plus(Duration.ofHours(1)), next)
+        assertTrue(heldBack.modified > next!!)
+    }
 }

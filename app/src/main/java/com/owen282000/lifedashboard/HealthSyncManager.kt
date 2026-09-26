@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.Build
 import com.owen282000.lifedashboard.NutritionSupport.putNutrition
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -25,6 +27,9 @@ private val EMPTY_HEALTH_DATA = HealthData()
  * samples is ~52 batches of 1000; the bound only guards against a cursor that stops advancing.
  */
 private const val MAX_PASSES_PER_BACKFILL_WINDOW = 100
+
+/** Serialises [HealthSyncManager.performSync] across every caller in the process. */
+private val SYNC_LOCK = Mutex()
 
 class HealthSyncManager(private val context: Context) {
 
@@ -77,7 +82,16 @@ class HealthSyncManager(private val context: Context) {
         }
     }
 
+    /**
+     * One sync at a time per process. A manual sync, the tile, the broadcast and the worker
+     * can all start one, and two running together would read and write the watermarks, the
+     * Receive ledger and the pending acks over each other; the second simply waits its turn.
+     */
     suspend fun performSync(): Result<HealthSyncResult> = withContext(Dispatchers.IO) {
+        SYNC_LOCK.withLock { performSyncLocked() }
+    }
+
+    private suspend fun performSyncLocked(): Result<HealthSyncResult> {
         try {
             // Deliver any queued payloads from earlier failed syncs first, preserving order.
             PendingDrainer.drain(context)
@@ -88,12 +102,7 @@ class HealthSyncManager(private val context: Context) {
 
             // MQTT alone is a valid destination since 1.13.0; Screen Time already allowed it.
             if (webhookUrls.isEmpty() && !publishToMqtt) {
-                return@withContext Result.failure(Exception("No webhook URLs configured"))
-            }
-
-            val enabledTypes = preferencesManager.getHealthEnabledDataTypes()
-            if (enabledTypes.isEmpty()) {
-                return@withContext Result.failure(Exception("No data types enabled"))
+                return Result.failure(Exception("No webhook URLs configured"))
             }
 
             // Receive (issue #62): one applier per sync. It puts the writeback block into the
@@ -101,6 +110,17 @@ class HealthSyncManager(private val context: Context) {
             // untouched. Inactive unless the switch is on, the source URL is still in the
             // section and there is a secret to verify the answer with.
             val writeBack = WriteBackApplier(context, preferencesManager, healthConnectManager)
+
+            // With Receive on, a phone that reads nothing still has a reason to sync: the
+            // heartbeat below is what fetches the measurements and carries the acks.
+            val enabledTypes = preferencesManager.getHealthEnabledDataTypes()
+            if (enabledTypes.isEmpty() && !writeBack.active) {
+                return Result.failure(Exception("No data types enabled"))
+            }
+            // Whether a request with the writeback block reached the source URL this sync.
+            // When none did, whatever the reason (nothing read, everything absorbed into open
+            // buckets, only MQTT), the heartbeat at the end makes the round trip instead.
+            var postedToSource = false
 
             // Dense types (heart rate) can hold a backlog many times the per-sync cap. A single
             // capped batch per run lets the backlog grow faster than it drains (issue #38), so
@@ -136,12 +156,19 @@ class HealthSyncManager(private val context: Context) {
                 val healthDataResult = healthConnectManager.readHealthData(enabledTypes, lastSyncTimestamps)
                 if (healthDataResult.isFailure) {
                     if (anyData) break
-                    return@withContext Result.failure(
+                    return Result.failure(
                         healthDataResult.exceptionOrNull() ?: Exception("Failed to read health data")
                     )
                 }
                 val healthData = healthDataResult.getOrThrow()
-                if (isHealthDataEmpty(healthData)) break
+                if (isHealthDataEmpty(healthData)) {
+                    // An empty batch can still carry watermarks: when the only new records were
+                    // the app's own (Receive), the read left them out but moved the watermark
+                    // past them, and without storing it here they would be read and counted
+                    // again on every sync for the whole lookback window.
+                    updateSyncTimestamps(healthData, mutableMapOf())
+                    break
+                }
                 anyData = true
                 lastDelivered = healthData
 
@@ -221,7 +248,10 @@ class HealthSyncManager(private val context: Context) {
                 // What the integration sent back rides on this same round trip; the outbox
                 // below only ever holds the plain payload, since a drained payload's answer
                 // is never read and the acks it carried stay stored until one is.
-                if (sourcePost != null) receive(writeBack, sourcePost, postResult)
+                if (sourcePost != null) {
+                    postedToSource = true
+                    receive(writeBack, sourcePost, postResult)
+                }
 
                 // Watermarks advance regardless of delivery outcome: a failed payload goes to the
                 // outbox and is guaranteed to be delivered by a later drain, so re-reading (and
@@ -280,7 +310,10 @@ class HealthSyncManager(private val context: Context) {
                 // dashboard would show a last sync that never moved while payloads went out.
                 SyncFailureNotifier.recordResult(context, LogType.HEALTH_CONNECT, postResult.isSuccess)
                 SyncStatusStore.record(context, postResult.isSuccess, 0, LogType.HEALTH_CONNECT)
-                if (sourcePost != null) receive(writeBack, sourcePost, postResult)
+                if (sourcePost != null) {
+                    postedToSource = true
+                    receive(writeBack, sourcePost, postResult)
+                }
                 if (postResult.isFailure) {
                     PendingSyncStore.forContext(context).enqueue(
                         payload = deletionPayload,
@@ -299,17 +332,26 @@ class HealthSyncManager(private val context: Context) {
                 deletionsDelivered = true
             }
 
+            // No request with the writeback block went out this sync, yet Receive is on: the
+            // heartbeat (protocol section 3.2) makes the round trip that carries the acks and
+            // fetches what is waiting. That covers a sync with nothing to send, one whose
+            // records all went into open buckets, and an MQTT-only setup. It is never queued
+            // in the outbox, because there is nothing in it worth keeping; its outcome feeds
+            // the webhook streak like a deletion-only payload does, so an unreachable Home
+            // Assistant is one outage with one notification, not two.
+            if (writeBack.active && !postedToSource) {
+                val post = writeBack.sourcePost(heartbeatPayload())
+                if (post != null) {
+                    val heartbeat = sourceOnlyManager(post, "heartbeat").postData(post.payload)
+                    SyncFailureNotifier.recordResult(context, LogType.HEALTH_CONNECT, heartbeat.isSuccess)
+                    receive(writeBack, post, heartbeat)
+                }
+            }
+
             // A sync that only withdrew records did do something, so it must not report "no new
             // data": the user asked for a sync and one went out.
             if (!anyData && !deletionsDelivered) {
-                // Nothing to send still means a round trip when Receive is on: the heartbeat
-                // (protocol section 3.2) carries the acks and fetches what is waiting. It is
-                // never queued in the outbox, because there is nothing in it worth keeping.
-                if (writeBack.active) {
-                    val post = writeBack.sourcePost(heartbeatPayload())
-                    if (post != null) receive(writeBack, post, sourceOnlyManager(post, "heartbeat").postData(post.payload))
-                }
-                return@withContext Result.success(
+                return Result.success(
                     if (writeBack.writtenTotal > 0) HealthSyncResult.Success(emptyMap(), writeBack.writtenTotal)
                     else HealthSyncResult.NoData
                 )
@@ -327,11 +369,13 @@ class HealthSyncManager(private val context: Context) {
             }
 
             queuedRecords?.let {
-                return@withContext Result.success(HealthSyncResult.Queued(it))
+                return Result.success(HealthSyncResult.Queued(it))
             }
-            Result.success(HealthSyncResult.Success(syncCounts, writeBack.writtenTotal))
+            return Result.success(HealthSyncResult.Success(syncCounts, writeBack.writtenTotal))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Result.failure(e)
+            return Result.failure(e)
         }
     }
 

@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class HealthUiState(
     val saved: HealthDraft,
@@ -67,7 +68,9 @@ data class HealthUiState(
 ) {
     val hasChanges: Boolean get() = draft.differsFrom(saved)
     val hasAnyPermission: Boolean get() = grantedPermissions.isNotEmpty()
-    val canSync: Boolean get() = !isSyncing && draft.hasDestination && draft.enabledTypes.isNotEmpty()
+
+    /** A phone that only receives has nothing to read, but every sync is still the round trip that fetches measurements. */
+    val canSync: Boolean get() = !isSyncing && draft.hasDestination && (draft.enabledTypes.isNotEmpty() || receive.enabled)
 }
 
 /** Everything the Health Connect screen can ask for; the view model implements it, previews can fake it. */
@@ -517,7 +520,10 @@ class HealthConnectViewModel(
         // Two readings a day is the usual surprise: the scale's own app already writes to
         // Health Connect, and now Home Assistant does too. Said once, when the switch goes on.
         viewModelScope.launch {
-            ops.otherSourcesWriting(type).firstOrNull()?.let { _toasts.tryEmit(UiMessage.OtherSourceWrites(it, type)) }
+            // Bounded like every Health Connect call: a warning is never worth a hang.
+            withTimeoutOrNull(OTHER_SOURCES_TIMEOUT_MS) { ops.otherSourcesWriting(type) }
+                ?.firstOrNull()
+                ?.let { _toasts.tryEmit(UiMessage.OtherSourceWrites(it, type)) }
         }
     }
 
@@ -536,6 +542,8 @@ class HealthConnectViewModel(
     override fun dismissReceivePermissionPrompt() = _state.update { it.copy(receivePermissionPrompt = null) }
 
     companion object {
+        private const val OTHER_SOURCES_TIMEOUT_MS = 5_000L
+
         fun factory(context: Context): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val app = context.applicationContext
