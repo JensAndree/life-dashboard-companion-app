@@ -96,6 +96,12 @@ class HealthSyncManager(private val context: Context) {
                 return@withContext Result.failure(Exception("No data types enabled"))
             }
 
+            // Receive (issue #62): one applier per sync. It puts the writeback block into the
+            // request for the source URL and reads that URL's answer; every other URL is
+            // untouched. Inactive unless the switch is on, the source URL is still in the
+            // section and there is a secret to verify the answer with.
+            val writeBack = WriteBackApplier(context, preferencesManager, healthConnectManager)
+
             // Dense types (heart rate) can hold a backlog many times the per-sync cap. A single
             // capped batch per run lets the backlog grow faster than it drains (issue #38), so
             // this loops read+deliver until no type was capped, bounded to keep worker runs short.
@@ -117,7 +123,8 @@ class HealthSyncManager(private val context: Context) {
             // handed to the webhook. A sync that finds no records, or whose records all land in
             // open buckets, ends without building a payload at all, and the feed cannot be read
             // twice, so clearing them any earlier would lose them for good (issue #61).
-            var pendingDeletions = preferencesManager.getPendingDeletions().merge(readDeletions(enabledTypes))
+            var pendingDeletions = preferencesManager.getPendingDeletions()
+                .merge(readDeletions(enabledTypes, preferencesManager.getWriteBackLedger().ownRecordIds))
             preferencesManager.setPendingDeletions(pendingDeletions)
 
             for (pass in 1..MAX_SYNC_PASSES) {
@@ -156,16 +163,6 @@ class HealthSyncManager(private val context: Context) {
                     if (healthData.cappedTypes.isEmpty()) break
                     continue
                 }
-
-                val webhookManager = WebhookManager(
-                    webhookUrls = webhookUrls,
-                    context = context,
-                    dataType = "health_connect",
-                    recordCount = totalRecords,
-                    logType = LogType.HEALTH_CONNECT,
-                    customHeaders = preferencesManager.getHealthWebhookHeaders(),
-                    signingSecret = preferencesManager.getHealthWebhookSecret()
-                )
 
                 // Build JSON payload, with deduplicated daily totals when enabled
                 val dailyTotals = if (preferencesManager.includeDailyTotals())
@@ -207,9 +204,24 @@ class HealthSyncManager(private val context: Context) {
                 // outbox, nor the feed they came from, which cannot be read twice.
                 pendingDeletions = DeletionSummary.EMPTY
 
+                val sourcePost = writeBack.sourcePost(jsonPayload)
+                val webhookManager = WebhookManager(
+                    webhookUrls = webhookUrls,
+                    context = context,
+                    dataType = "health_connect",
+                    recordCount = totalRecords,
+                    logType = LogType.HEALTH_CONNECT,
+                    customHeaders = preferencesManager.getHealthWebhookHeaders(),
+                    signingSecret = preferencesManager.getHealthWebhookSecret(),
+                    source = sourcePost
+                )
                 val postResult = webhookManager.postData(jsonPayload)
                 SyncFailureNotifier.recordResult(context, LogType.HEALTH_CONNECT, postResult.isSuccess)
                 SyncStatusStore.record(context, postResult.isSuccess, if (postResult.isSuccess) totalRecords else 0, LogType.HEALTH_CONNECT)
+                // What the integration sent back rides on this same round trip; the outbox
+                // below only ever holds the plain payload, since a drained payload's answer
+                // is never read and the acks it carried stay stored until one is.
+                if (sourcePost != null) receive(writeBack, sourcePost, postResult)
 
                 // Watermarks advance regardless of delivery outcome: a failed payload goes to the
                 // outbox and is guaranteed to be delivered by a later drain, so re-reading (and
@@ -251,6 +263,7 @@ class HealthSyncManager(private val context: Context) {
                 )
                 pendingDeletions = DeletionSummary.EMPTY
 
+                val sourcePost = writeBack.sourcePost(deletionPayload)
                 val webhookManager = WebhookManager(
                     webhookUrls = webhookUrls,
                     context = context,
@@ -258,7 +271,8 @@ class HealthSyncManager(private val context: Context) {
                     recordCount = 0,
                     logType = LogType.HEALTH_CONNECT,
                     customHeaders = preferencesManager.getHealthWebhookHeaders(),
-                    signingSecret = preferencesManager.getHealthWebhookSecret()
+                    signingSecret = preferencesManager.getHealthWebhookSecret(),
+                    source = sourcePost
                 )
                 val postResult = webhookManager.postData(deletionPayload)
                 // Reported like any other delivery: a webhook that is down for a run of
@@ -266,6 +280,7 @@ class HealthSyncManager(private val context: Context) {
                 // dashboard would show a last sync that never moved while payloads went out.
                 SyncFailureNotifier.recordResult(context, LogType.HEALTH_CONNECT, postResult.isSuccess)
                 SyncStatusStore.record(context, postResult.isSuccess, 0, LogType.HEALTH_CONNECT)
+                if (sourcePost != null) receive(writeBack, sourcePost, postResult)
                 if (postResult.isFailure) {
                     PendingSyncStore.forContext(context).enqueue(
                         payload = deletionPayload,
@@ -287,7 +302,17 @@ class HealthSyncManager(private val context: Context) {
             // A sync that only withdrew records did do something, so it must not report "no new
             // data": the user asked for a sync and one went out.
             if (!anyData && !deletionsDelivered) {
-                return@withContext Result.success(HealthSyncResult.NoData)
+                // Nothing to send still means a round trip when Receive is on: the heartbeat
+                // (protocol section 3.2) carries the acks and fetches what is waiting. It is
+                // never queued in the outbox, because there is nothing in it worth keeping.
+                if (writeBack.active) {
+                    val post = writeBack.sourcePost(heartbeatPayload())
+                    if (post != null) receive(writeBack, post, sourceOnlyManager(post, "heartbeat").postData(post.payload))
+                }
+                return@withContext Result.success(
+                    if (writeBack.writtenTotal > 0) HealthSyncResult.Success(emptyMap(), writeBack.writtenTotal)
+                    else HealthSyncResult.NoData
+                )
             }
 
             // Publish the newest values to the user's MQTT broker (Home Assistant Discovery)
@@ -304,11 +329,42 @@ class HealthSyncManager(private val context: Context) {
             queuedRecords?.let {
                 return@withContext Result.success(HealthSyncResult.Queued(it))
             }
-            Result.success(HealthSyncResult.Success(syncCounts))
+            Result.success(HealthSyncResult.Success(syncCounts, writeBack.writtenTotal))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
+    /**
+     * Handles the source URL's answer to [sent] and, while the integration says more is
+     * waiting, asks again in heartbeat form: at most [WriteBackPayload.MAX_FOLLOW_UPS] times
+     * and only while the sync has time left, so a large backlog is drained over a few syncs
+     * rather than in one long one.
+     */
+    private suspend fun receive(writeBack: WriteBackApplier, sent: SourcePost, outcome: Result<WebhookOutcome>) {
+        var round = writeBack.handle(outcome, sent)
+        var followUps = 0
+        while (round.more && followUps < WriteBackPayload.MAX_FOLLOW_UPS && writeBack.hasTimeForFollowUp()) {
+            followUps++
+            val post = writeBack.sourcePost(heartbeatPayload()) ?: break
+            round = writeBack.handle(sourceOnlyManager(post, "heartbeat").postData(post.payload), post)
+        }
+    }
+
+    /** The heartbeat body (protocol section 3.2): timestamp, version and source, nothing else; the block is added per URL. */
+    private fun heartbeatPayload(): String = buildJsonPayload(EMPTY_HEALTH_DATA)
+
+    /** A manager that talks to the source URL alone, for the heartbeat and the follow-up requests. */
+    private fun sourceOnlyManager(post: SourcePost, dataType: String) = WebhookManager(
+        webhookUrls = listOf(post.url),
+        context = context,
+        dataType = dataType,
+        recordCount = 0,
+        logType = LogType.HEALTH_CONNECT,
+        customHeaders = preferencesManager.getHealthWebhookHeaders(),
+        signingSecret = preferencesManager.getHealthWebhookSecret(),
+        source = post
+    )
 
     /**
      * One-time export of [days] of history to the configured webhooks, oldest window first.
@@ -482,7 +538,7 @@ class HealthSyncManager(private val context: Context) {
      * themselves are worth is decided elsewhere; the caller keeps them in storage until a
      * payload has taken them, because this read cannot be repeated.
      */
-    private suspend fun readDeletions(enabledTypes: Set<HealthDataType>): DeletionSummary {
+    private suspend fun readDeletions(enabledTypes: Set<HealthDataType>, ownRecordIds: Set<String>): DeletionSummary {
         val now = System.currentTimeMillis()
         val results = mutableMapOf<HealthDataType, ChangesResult>()
 
@@ -501,7 +557,7 @@ class HealthSyncManager(private val context: Context) {
             val result = if (timeoutMs == 0L) {
                 ChangesResult(error = "skipped: deletion budget spent")
             } else {
-                withTimeoutOrNull(timeoutMs) { healthConnectManager.readDeletions(type, usable) }
+                withTimeoutOrNull(timeoutMs) { healthConnectManager.readDeletions(type, usable, ownRecordIds) }
                     ?: ChangesResult(error = "timed out after $timeoutMs ms")
             }
             // A type that errored keeps its token: the feed was not consumed, so the next sync

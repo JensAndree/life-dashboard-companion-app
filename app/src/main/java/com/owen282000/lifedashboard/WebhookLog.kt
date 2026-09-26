@@ -13,6 +13,12 @@ enum class LogDestination {
     MQTT
 }
 
+/** Which way the data went: out to a receiver, or in from Home Assistant into Health Connect (Receive). */
+enum class LogDirection {
+    OUT,
+    IN
+}
+
 @Serializable
 data class WebhookLog(
     val id: String,
@@ -27,5 +33,8 @@ data class WebhookLog(
     val logType: String = LogType.HEALTH_CONNECT.name, // "HEALTH_CONNECT" or "SCREEN_TIME"
     val note: String? = null, // e.g. "Recovered on attempt 2 of 3" for successes after retries
     // "WEBHOOK" or "MQTT"; entries from before 1.13 are webhooks
-    val destination: String = LogDestination.WEBHOOK.name
+    val destination: String = LogDestination.WEBHOOK.name,
+    // "OUT" or "IN"; entries from before 1.20 went out. An IN row's rawPayload holds the
+    // per-reading lines (ReceiveLogLine), values only when full payloads are kept.
+    val direction: String = LogDirection.OUT.name
 )

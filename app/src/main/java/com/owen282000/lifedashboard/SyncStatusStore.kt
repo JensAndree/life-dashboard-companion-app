@@ -1,6 +1,7 @@
 package com.owen282000.lifedashboard
 
 import android.content.Context
+import androidx.core.content.edit
 
 /** Last-sync status shared with the home screen widget. */
 object SyncStatusStore {
@@ -10,6 +11,8 @@ object SyncStatusStore {
     private const val KEY_LAST_SUCCESS = "widget_last_success"
     private const val KEY_RECORDS_TODAY = "widget_records_today"
     private const val KEY_RECORDS_TODAY_DATE = "widget_records_today_date"
+    private const val KEY_WRITTEN_TODAY = "receive_written_today"
+    private const val KEY_WRITTEN_TODAY_DATE = "receive_written_today_date"
 
     data class Status(
         val lastSyncMillis: Long?,
@@ -42,6 +45,23 @@ object SyncStatusStore {
         editor.apply()
 
         SyncStatusWidget.updateAll(context)
+    }
+
+    /** Adds [count] to what Receive wrote into Health Connect today (issue #62); shown in the Receive row. */
+    fun recordWritten(context: Context, count: Int) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val today = java.time.LocalDate.now().toString()
+        val current = if (prefs.getString(KEY_WRITTEN_TODAY_DATE, null) == today) prefs.getInt(KEY_WRITTEN_TODAY, 0) else 0
+        prefs.edit {
+            putInt(KEY_WRITTEN_TODAY, current + count)
+            putString(KEY_WRITTEN_TODAY_DATE, today)
+        }
+    }
+
+    fun writtenToday(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString(KEY_WRITTEN_TODAY_DATE, null) != java.time.LocalDate.now().toString()) return 0
+        return prefs.getInt(KEY_WRITTEN_TODAY, 0)
     }
 
     /** App-wide status, or the status of one [source] when given. */

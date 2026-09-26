@@ -51,6 +51,13 @@
     <string name="phone_name_title">Telefonname</string>
     <string name="phone_name_description">Für ein zweites Telefon am selben MQTT-Broker. Leer lässt Gerät und Topics, wie sie sind; ein Name gibt diesem Telefon ein eigenes Gerät und eigene Topics unter dem Basis-Topic.</string>
     <string name="phone_name_placeholder">Optional</string>
+
+    <!-- Empfangen: Messwerte aus Home Assistant nach Health Connect -->
+    <string name="receive_failing_title">Messwerte aus Home Assistant kommen nicht in Health Connect an</string>
+    <plurals name="receive_failing_text">
+        <item quantity="one">%1$d Runde fehlgeschlagen. Details stehen in den Logs.</item>
+        <item quantity="other">%1$d Runden in Folge fehlgeschlagen. Details stehen in den Logs.</item>
+    </plurals>
     <string name="sync_advanced_title">Erweitert</string>
     <string name="sync_data_preview_title">Datenvorschau</string>
     <string name="sync_export_data">Daten exportieren</string>

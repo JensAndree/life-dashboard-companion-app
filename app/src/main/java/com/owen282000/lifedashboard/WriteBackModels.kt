@@ -91,3 +91,21 @@ data class PendingReading(
     /** The Home Assistant entity the reading came from, for the log. */
     val entityId: String get() = id.substringBeforeLast('@')
 }
+
+/** The Receive settings as stored: the switch, the types, the history switch and the source URL. */
+data class ReceiveSettings(
+    val enabled: Boolean = false,
+    val types: Set<WriteBackType> = emptySet(),
+    val olderMeasurements: Boolean = false,
+    /** The webhook URL whose response is read; null until Receive picked one. */
+    val sourceUrl: String? = null
+)
+
+/** What the last responses told the app, for the Receive row. */
+data class ReceiveStatus(
+    /** The type keys the integration has a mapping for; empty until the first response. */
+    val configured: List<String> = emptyList(),
+    /** True when the source URL answered without the protocol block: the integration is too old. */
+    val integrationOutdated: Boolean = false,
+    val writtenToday: Int = 0
+)

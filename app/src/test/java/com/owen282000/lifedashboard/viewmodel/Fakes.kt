@@ -5,7 +5,10 @@ import com.owen282000.lifedashboard.HealthSyncResult
 import com.owen282000.lifedashboard.MqttBroker
 import com.owen282000.lifedashboard.MqttSection
 import com.owen282000.lifedashboard.MqttSectionSettings
+import com.owen282000.lifedashboard.ReceiveSettings
+import com.owen282000.lifedashboard.ReceiveStatus
 import com.owen282000.lifedashboard.ScreenTimeSyncResult
+import com.owen282000.lifedashboard.WriteBackType
 
 internal fun emptyMqtt() = MqttDraft.from(
     MqttSectionSettings(enabled = false, useSharedBroker = true, ownBroker = MqttBroker("", 1883, false, null, null), baseTopic = "lifedashboard"),
@@ -50,6 +53,14 @@ internal class FakeAppSettings(
     override fun setClientCertAlias(alias: String?) { certAlias = alias }
     override fun phoneName() = storedPhoneName
     override fun setPhoneName(name: String?) { storedPhoneName = name?.trim()?.takeIf { it.isNotEmpty() } }
+    var receive = ReceiveSettings()
+    var status = ReceiveStatus()
+    override fun receiveSettings() = receive
+    override fun setReceiveEnabled(enabled: Boolean) { receive = receive.copy(enabled = enabled) }
+    override fun setReceiveTypes(types: Set<WriteBackType>) { receive = receive.copy(types = types) }
+    override fun setReceiveOlderMeasurements(enabled: Boolean) { receive = receive.copy(olderMeasurements = enabled) }
+    override fun setReceiveSourceUrl(url: String?) { receive = receive.copy(sourceUrl = url) }
+    override fun receiveStatus() = status
     override fun failureNotificationsEnabled() = notifications
     override fun setFailureNotificationsEnabled(enabled: Boolean) { notifications = enabled }
     override fun failureThreshold() = threshold

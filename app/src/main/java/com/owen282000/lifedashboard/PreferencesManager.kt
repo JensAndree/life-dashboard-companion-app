@@ -11,6 +11,7 @@ import java.time.LocalTime
 
 class PreferencesManager(context: Context) {
 
+    private val appContext: Context = context.applicationContext ?: context
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
@@ -48,6 +49,13 @@ class PreferencesManager(context: Context) {
     val secretsUnavailable: Boolean get() = securePrefs is InMemoryPrefs
 
     private val logStore = WebhookLogStore(context)
+
+    /**
+     * The Receive ledger and the acks still to send (issue #62), in their own file so they are
+     * excluded from backup like the watermarks: on a new phone the integration offers what was
+     * not acknowledged again, and the upsert makes that harmless.
+     */
+    private val writeBackPrefs: SharedPreferences = context.getSharedPreferences(WRITEBACK_PREFS_NAME, Context.MODE_PRIVATE)
 
     init {
         migrateSecretsToEncryptedStorage()
@@ -146,6 +154,17 @@ class PreferencesManager(context: Context) {
     companion object {
         private const val PREFS_NAME = "life_dashboard_prefs"
         private const val SECURE_PREFS_NAME = "life_dashboard_secure_prefs"
+        private const val WRITEBACK_PREFS_NAME = "life_dashboard_writeback"
+
+        // Receive (write-back from Home Assistant, issue #62)
+        private const val KEY_RECEIVE_ENABLED = "receive_enabled"
+        private const val KEY_RECEIVE_TYPES = "receive_types"
+        private const val KEY_RECEIVE_OLDER = "receive_older_measurements"
+        private const val KEY_RECEIVE_SOURCE_URL = "receive_source_url"
+        private const val KEY_RECEIVE_CONFIGURED = "receive_configured_types"
+        private const val KEY_RECEIVE_OUTDATED = "receive_integration_outdated"
+        private const val KEY_WRITEBACK_LEDGER = "ledger"
+        private const val KEY_WRITEBACK_REPORT = "report"
 
         private const val KEY_INCLUDE_DAILY_TOTALS = "include_daily_totals"
         private const val KEY_ALLOW_HTTP_WEBHOOKS = "allow_http_webhooks"
@@ -229,6 +248,10 @@ class PreferencesManager(context: Context) {
     fun setHealthWebhookUrls(urls: List<String>) {
         val urlsString = urls.joinToString(",")
         prefs.edit().putString(KEY_HEALTH_WEBHOOK_URLS, urlsString).apply()
+        // The source URL of Receive must stay one of the section's URLs; removing it forgets
+        // the choice, and with it the ledger that belonged to that receiver.
+        val source = getReceiveSourceUrl()
+        if (source != null && source !in urls) setReceiveSourceUrl(null)
     }
 
     fun getHealthEnabledDataTypes(): Set<HealthDataType> {
@@ -430,12 +453,71 @@ class PreferencesManager(context: Context) {
     }
 
     fun setHealthWebhookSecret(secret: String?) {
+        val previous = getHealthWebhookSecret()
         if (secret.isNullOrBlank()) {
             securePrefs.edit().remove(KEY_HEALTH_WEBHOOK_SECRET).apply()
         } else {
             securePrefs.edit().putString(KEY_HEALTH_WEBHOOK_SECRET, secret).apply()
         }
+        // A new secret, whether typed or paired, means a new counterpart for Receive: the
+        // ledger and the acks belonged to the old one (protocol section 6).
+        if (previous != null && previous != secret?.takeIf { it.isNotBlank() }) clearWriteBackState()
     }
+
+    // ==================== Receive (write-back from Home Assistant, issue #62) ====================
+
+    fun getReceiveSettings(): ReceiveSettings = ReceiveSettings(
+        enabled = prefs.getBoolean(KEY_RECEIVE_ENABLED, false),
+        types = (prefs.getString(KEY_RECEIVE_TYPES, "") ?: "")
+            .split(",")
+            .mapNotNull { name -> WriteBackType.entries.firstOrNull { it.name == name } }
+            .toSet(),
+        olderMeasurements = prefs.getBoolean(KEY_RECEIVE_OLDER, false),
+        sourceUrl = getReceiveSourceUrl()
+    )
+
+    fun setReceiveEnabled(enabled: Boolean) = prefs.edit { putBoolean(KEY_RECEIVE_ENABLED, enabled) }
+
+    fun setReceiveTypes(types: Set<WriteBackType>) =
+        prefs.edit { putString(KEY_RECEIVE_TYPES, WriteBackType.entries.filter { it in types }.joinToString(",") { it.name }) }
+
+    fun setReceiveOlderMeasurements(enabled: Boolean) = prefs.edit { putBoolean(KEY_RECEIVE_OLDER, enabled) }
+
+    fun getReceiveSourceUrl(): String? = prefs.getString(KEY_RECEIVE_SOURCE_URL, null)?.takeIf { it.isNotBlank() }
+
+    /** Choosing another source URL, or none, starts Receive's bookkeeping afresh (protocol section 6). */
+    fun setReceiveSourceUrl(url: String?) {
+        val previous = getReceiveSourceUrl()
+        prefs.edit { if (url.isNullOrBlank()) remove(KEY_RECEIVE_SOURCE_URL) else putString(KEY_RECEIVE_SOURCE_URL, url) }
+        if (previous != url?.takeIf { it.isNotBlank() }) clearWriteBackState()
+    }
+
+    fun getReceiveStatus(): ReceiveStatus = ReceiveStatus(
+        configured = (prefs.getString(KEY_RECEIVE_CONFIGURED, "") ?: "").split(",").filter { it.isNotBlank() },
+        integrationOutdated = prefs.getBoolean(KEY_RECEIVE_OUTDATED, false),
+        writtenToday = SyncStatusStore.writtenToday(appContext)
+    )
+
+    fun setReceiveConfiguredTypes(types: List<String>) = prefs.edit { putString(KEY_RECEIVE_CONFIGURED, types.joinToString(",")) }
+
+    fun setReceiveIntegrationOutdated(outdated: Boolean) = prefs.edit { putBoolean(KEY_RECEIVE_OUTDATED, outdated) }
+
+    fun getWriteBackLedger(): WriteBackLedger = WriteBackLedger.decode(writeBackPrefs.getString(KEY_WRITEBACK_LEDGER, null))
+
+    fun setWriteBackLedger(ledger: WriteBackLedger) = writeBackPrefs.edit { putString(KEY_WRITEBACK_LEDGER, ledger.encode()) }
+
+    /** The acks and failures still to ride on the next request to the source URL. */
+    fun getWriteBackReport(): WriteBackReport =
+        writeBackPrefs.getString(KEY_WRITEBACK_REPORT, null)
+            ?.let { runCatching { Json.decodeFromString<WriteBackReport>(it) }.getOrNull() }
+            ?: WriteBackReport.EMPTY
+
+    fun setWriteBackReport(report: WriteBackReport) = writeBackPrefs.edit {
+        if (report.isEmpty) remove(KEY_WRITEBACK_REPORT) else putString(KEY_WRITEBACK_REPORT, Json.encodeToString(report))
+    }
+
+    /** Forgets the ledger and the pending acks; what was not acknowledged is offered again. */
+    fun clearWriteBackState() = writeBackPrefs.edit { remove(KEY_WRITEBACK_LEDGER); remove(KEY_WRITEBACK_REPORT) }
 
     // ==================== Sync schedules ====================
 
@@ -573,7 +655,9 @@ class PreferencesManager(context: Context) {
         logStore.getAll(filterType)
 
     fun addWebhookLog(log: WebhookLog) {
-        logStore.add(log, keepFullPayloads = keepFullPayloads())
+        // A Receive row's payload is the per-reading lines, already without values unless the
+        // user keeps full payloads, so it is stored whole rather than cut at the size limit.
+        logStore.add(log, keepFullPayloads = keepFullPayloads() || log.direction == LogDirection.IN.name)
     }
 
     fun clearWebhookLogs(filterType: LogType? = null) {

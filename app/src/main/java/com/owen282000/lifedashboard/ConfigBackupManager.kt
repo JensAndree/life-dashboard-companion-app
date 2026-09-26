@@ -19,6 +19,7 @@ class ConfigBackupManager(private val context: Context) {
     fun export(): ConfigBackup {
         val healthSection = prefs.getMqttSection(MqttSection.HEALTH)
         val screenTimeSection = prefs.getMqttSection(MqttSection.SCREEN_TIME)
+        val receive = prefs.getReceiveSettings()
 
         return ConfigBackup(
             exportedAt = Instant.now().toString(),
@@ -60,7 +61,11 @@ class ConfigBackupManager(private val context: Context) {
                     .filterValues { it != DEFAULT_RESOLUTION }
                     .entries.sortedBy { it.key.name }
                     .associate { it.key.name to it.value.name },
-                phoneName = prefs.getPhoneName()
+                phoneName = prefs.getPhoneName(),
+                receiveEnabled = receive.enabled,
+                receiveTypes = WriteBackType.entries.filter { it in receive.types }.map { it.name },
+                receiveOlderMeasurements = receive.olderMeasurements,
+                receiveSourceUrl = receive.sourceUrl
             )
         )
     }
@@ -119,6 +124,11 @@ class ConfigBackupManager(private val context: Context) {
             prefs.setUseScreenTimeDayBoundary(screenTimeUseDayBoundary)
             failureNotificationThreshold?.let { SyncFailureNotifier.setThreshold(context, it) }
             prefs.setPhoneName(phoneName)
+            prefs.setReceiveEnabled(receiveEnabled)
+            prefs.setReceiveTypes(receiveTypes.mapNotNull { name -> WriteBackType.entries.firstOrNull { it.name == name } }.toSet())
+            prefs.setReceiveOlderMeasurements(receiveOlderMeasurements)
+            // Only a URL the health section actually has; the URLs were written above.
+            prefs.setReceiveSourceUrl(receiveSourceUrl?.takeIf { it in backup.health.webhookUrls })
             // Null means a backup from before resolutions existed: leave the setting alone.
             seriesResolutions?.let { stored ->
                 prefs.setSeriesResolutions(

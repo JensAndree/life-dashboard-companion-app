@@ -7,6 +7,7 @@
   so a restored copy is useless at best; excluding it also means a keystore outage that fell
   back to plain storage can never ship cleartext secrets off-device.
   life_dashboard_logs.xml holds raw webhook payloads (full health data, incl. cycle tracking).
+  life_dashboard_writeback.xml is the Receive ledger, this install's state like the watermarks.
 
   device-transfer could in principle keep the secure prefs, since the keystore may migrate on
   some direct transfers, but that is not guaranteed across OEMs. Excluding it in both places
@@ -17,10 +18,12 @@
         <include domain="sharedpref" path="."/>
         <exclude domain="sharedpref" path="life_dashboard_secure_prefs.xml"/>
         <exclude domain="sharedpref" path="life_dashboard_logs.xml"/>
+        <exclude domain="sharedpref" path="life_dashboard_writeback.xml"/>
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="."/>
         <exclude domain="sharedpref" path="life_dashboard_secure_prefs.xml"/>
         <exclude domain="sharedpref" path="life_dashboard_logs.xml"/>
+        <exclude domain="sharedpref" path="life_dashboard_writeback.xml"/>
     </device-transfer>
 </data-extraction-rules>

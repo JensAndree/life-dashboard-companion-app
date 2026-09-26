@@ -165,5 +165,10 @@ data class OptionsConfig(
     /** Type name to resolution name, only for types not at raw; absent in older backups. */
     @SerialName("series_resolutions") val seriesResolutions: Map<String, String>? = null,
     /** The phone's name for MQTT (1.20.0); null or absent means no name. */
-    @SerialName("phone_name") val phoneName: String? = null
+    @SerialName("phone_name") val phoneName: String? = null,
+    /** Receive (1.20.0): the switches and the source URL; the ledger stays behind like the watermarks. */
+    @SerialName("receive_enabled") val receiveEnabled: Boolean = false,
+    @SerialName("receive_types") val receiveTypes: List<String> = emptyList(),
+    @SerialName("receive_older_measurements") val receiveOlderMeasurements: Boolean = false,
+    @SerialName("receive_source_url") val receiveSourceUrl: String? = null
 )

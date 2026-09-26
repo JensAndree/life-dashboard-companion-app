@@ -10,6 +10,11 @@
   - life_dashboard_logs.xml holds raw webhook payloads, i.e. full health data including
     cycle tracking. That must never leave the device through a cloud backup.
 
+  - life_dashboard_writeback.xml is the Receive ledger: which readings from Home Assistant
+    were written and their Health Connect ids. It describes this install's state, like the
+    sync watermarks, so a new phone starts afresh and the integration re-offers what was
+    not acknowledged; the upsert makes that harmless.
+
   Secrets have to be re-entered after a restore, which is the deliberate trade-off until a
   dedicated settings export/import exists.
 -->
@@ -17,4 +22,5 @@
     <include domain="sharedpref" path="."/>
     <exclude domain="sharedpref" path="life_dashboard_secure_prefs.xml"/>
     <exclude domain="sharedpref" path="life_dashboard_logs.xml"/>
+    <exclude domain="sharedpref" path="life_dashboard_writeback.xml"/>
 </full-backup-content>

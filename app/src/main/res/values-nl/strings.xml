@@ -51,6 +51,13 @@
     <string name="phone_name_title">Telefoonnaam</string>
     <string name="phone_name_description">Voor een tweede telefoon op dezelfde MQTT-broker. Leeg laat het apparaat en de topics zoals ze zijn; een naam geeft deze telefoon een eigen apparaat en eigen topics onder het basistopic.</string>
     <string name="phone_name_placeholder">Optioneel</string>
+
+    <!-- Ontvangen: metingen uit Home Assistant naar Health Connect -->
+    <string name="receive_failing_title">Metingen uit Home Assistant komen niet in Health Connect terecht</string>
+    <plurals name="receive_failing_text">
+        <item quantity="one">%1$d ronde mislukt. Bekijk de logs voor details.</item>
+        <item quantity="other">%1$d rondes op rij mislukt. Bekijk de logs voor details.</item>
+    </plurals>
     <string name="sync_advanced_title">Geavanceerd</string>
     <string name="sync_data_preview_title">Voorbeeld van data</string>
     <string name="sync_export_data">Data exporteren</string>

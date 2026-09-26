@@ -120,6 +120,17 @@ data class WriteBackReport(
         )
     }
 
+    /** This report minus what [delivered] carried: the entries a request the integration accepted has taken along. */
+    fun without(delivered: WriteBackReport): WriteBackReport {
+        if (delivered.isEmpty) return this
+        val gone = delivered.ack.toSet()
+        val goneFailed = delivered.failed.toSet()
+        return WriteBackReport(
+            ack = ack.filter { it !in gone },
+            failed = failed.filter { it !in goneFailed }
+        )
+    }
+
     companion object {
         val EMPTY = WriteBackReport()
     }

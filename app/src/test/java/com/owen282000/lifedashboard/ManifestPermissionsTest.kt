@@ -131,7 +131,8 @@ class ManifestPermissionsTest {
     fun backupRulesExcludeSecretsAndPayloads() {
         val excluded = listOf(
             "life_dashboard_secure_prefs.xml",
-            "life_dashboard_logs.xml"
+            "life_dashboard_logs.xml",
+            "life_dashboard_writeback.xml"
         )
         listOf(
             "src/main/res/xml/backup_rules.xml",

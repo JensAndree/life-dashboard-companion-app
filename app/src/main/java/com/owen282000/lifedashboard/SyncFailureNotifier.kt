@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 
 /**
  * Posts a local notification when syncs keep failing, so silent background problems
@@ -83,6 +84,45 @@ object SyncFailureNotifier {
     }
 
     private fun notificationId(logType: LogType) = NOTIFICATION_ID + logType.ordinal
+
+    /** Its own streak next to the two sync categories: a failing Receive must not hide behind a healthy webhook. */
+    private const val RECEIVE_STREAK_KEY = KEY_STREAK_PREFIX + "RECEIVE"
+    private const val RECEIVE_NOTIFICATION_ID = NOTIFICATION_ID + 10
+
+    /**
+     * The same streak rule for Receive (issue #62): a round counts as failed when the
+     * response was rejected, the source URL did not answer, or a reading could not be
+     * written for a reason the phone can fix. Nothing to receive is not a failure.
+     */
+    fun recordReceiveResult(context: Context, success: Boolean) {
+        val prefs = prefs(context)
+        if (success) {
+            if (prefs.getInt(RECEIVE_STREAK_KEY, 0) > 0) {
+                prefs.edit { putInt(RECEIVE_STREAK_KEY, 0) }
+                NotificationManagerCompat.from(context).cancel(RECEIVE_NOTIFICATION_ID)
+            }
+            return
+        }
+        val streak = prefs.getInt(RECEIVE_STREAK_KEY, 0) + 1
+        prefs.edit { putInt(RECEIVE_STREAK_KEY, streak) }
+
+        if (!isEnabled(context)) return
+        val threshold = getThreshold(context).coerceAtLeast(1)
+        if (streak % threshold != 0) return
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        ensureChannel(context)
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle(context.getString(R.string.receive_failing_title))
+            .setContentText(context.resources.getQuantityString(R.plurals.receive_failing_text, streak, streak))
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(context).notify(RECEIVE_NOTIFICATION_ID, notification)
+    }
 
     private fun ensureChannel(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

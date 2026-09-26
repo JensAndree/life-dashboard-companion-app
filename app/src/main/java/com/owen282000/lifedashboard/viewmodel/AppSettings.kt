@@ -6,7 +6,10 @@ import com.owen282000.lifedashboard.LifeDashboardApplication
 import com.owen282000.lifedashboard.LogType
 import com.owen282000.lifedashboard.MqttSection
 import com.owen282000.lifedashboard.PreferencesManager
+import com.owen282000.lifedashboard.ReceiveSettings
+import com.owen282000.lifedashboard.ReceiveStatus
 import com.owen282000.lifedashboard.SyncFailureNotifier
+import com.owen282000.lifedashboard.WriteBackType
 
 /**
  * The slice of persisted settings the two sync tabs read and write, behind an interface so
@@ -32,6 +35,14 @@ interface AppSettings {
     /** The phone's name for MQTT, shared by both tabs; null when it has none. */
     fun phoneName(): String?
     fun setPhoneName(name: String?)
+
+    /** Receive (write-back from Home Assistant, issue #62). Applied at once, like the other Advanced settings. */
+    fun receiveSettings(): ReceiveSettings
+    fun setReceiveEnabled(enabled: Boolean)
+    fun setReceiveTypes(types: Set<WriteBackType>)
+    fun setReceiveOlderMeasurements(enabled: Boolean)
+    fun setReceiveSourceUrl(url: String?)
+    fun receiveStatus(): ReceiveStatus
     fun failureNotificationsEnabled(): Boolean
     fun setFailureNotificationsEnabled(enabled: Boolean)
     fun failureThreshold(): Int
@@ -105,6 +116,12 @@ class PreferencesAppSettings(
     override fun setClientCertAlias(alias: String?) = prefs.setClientCertAlias(alias)
     override fun phoneName() = prefs.getPhoneName()
     override fun setPhoneName(name: String?) = prefs.setPhoneName(name)
+    override fun receiveSettings() = prefs.getReceiveSettings()
+    override fun setReceiveEnabled(enabled: Boolean) = prefs.setReceiveEnabled(enabled)
+    override fun setReceiveTypes(types: Set<WriteBackType>) = prefs.setReceiveTypes(types)
+    override fun setReceiveOlderMeasurements(enabled: Boolean) = prefs.setReceiveOlderMeasurements(enabled)
+    override fun setReceiveSourceUrl(url: String?) = prefs.setReceiveSourceUrl(url)
+    override fun receiveStatus() = prefs.getReceiveStatus()
     override fun failureNotificationsEnabled() = SyncFailureNotifier.isEnabled(context)
     override fun setFailureNotificationsEnabled(enabled: Boolean) = SyncFailureNotifier.setEnabled(context, enabled)
     override fun failureThreshold() = SyncFailureNotifier.getThreshold(context)

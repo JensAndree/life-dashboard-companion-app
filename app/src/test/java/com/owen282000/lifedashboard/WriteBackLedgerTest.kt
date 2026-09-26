@@ -82,4 +82,15 @@ class WriteBackLedgerTest {
         assertTrue(WriteBackReport.EMPTY.isEmpty)
         assertFalse(merged.isEmpty)
     }
+
+    @Test
+    fun `what an accepted request carried leaves the report, what arrived since stays`() {
+        val sent = WriteBackReport(ack = listOf("a"), failed = listOf(FailedReading("b", "too_old")))
+        val stored = sent.merge(WriteBackReport(ack = listOf("c"), failed = listOf(FailedReading("d", "invalid"))))
+        val left = stored.without(sent)
+        assertEquals(listOf("c"), left.ack)
+        assertEquals(listOf(FailedReading("d", "invalid")), left.failed)
+        assertEquals(stored, stored.without(WriteBackReport.EMPTY))
+        assertTrue(sent.without(sent).isEmpty)
+    }
 }
