@@ -34,6 +34,31 @@ class ManifestPermissionsTest {
         assertTrue("Missing manifest permissions:\n${missing.joinToString("\n")}", missing.isEmpty())
     }
 
+    /**
+     * The write side (issue #62) declares exactly the types Receive can write: every
+     * WriteBackType has its WRITE permission, and no other WRITE permission exists in the
+     * release manifest. A write permission that is declared but not backed by a feature is
+     * what Play's sensitive-permission policy forbids, and WRITE_EXERCISE_ROUTE in particular
+     * must never appear.
+     */
+    @Test
+    fun theWritePermissionsAreExactlyThoseOfTheWritableTypes() {
+        val expected = WriteBackType.entries.map { it.writePermission }.toSet()
+        val declaredWrites = declaredPermissions.filter { it.startsWith("android.permission.health.WRITE_") }.toSet()
+        assertEquals(
+            "release manifest must declare the WRITE permission of every WriteBackType and nothing more",
+            expected,
+            declaredWrites
+        )
+        assertEquals(7, expected.size)
+        assertFalse("android.permission.health.WRITE_EXERCISE_ROUTE" in declaredPermissions)
+    }
+
+    @Test
+    fun theBulkPermissionRequestStaysReadOnly() {
+        assertTrue(HealthConnectManager.ALL_PERMISSIONS.none { it.startsWith("android.permission.health.WRITE_") })
+    }
+
     @Test
     fun backgroundAndHistoryPermissionsAreDeclared() {
         assertTrue(HealthConnectManager.BACKGROUND_PERMISSION in declaredPermissions)

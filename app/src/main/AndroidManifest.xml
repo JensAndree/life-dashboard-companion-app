@@ -38,6 +38,21 @@
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_HISTORY" />
 
+    <!--
+        Write permissions, only for the seven types the app can receive from Home Assistant
+        (issue #62). Each is requested on its own, the moment the user switches that type on
+        under Receive, never in the bulk permission request. Every entry here is also an entry
+        in the Play Health apps declaration, so WriteBackType and this list move together;
+        ManifestPermissionsTest keeps them in step.
+    -->
+    <uses-permission android:name="android.permission.health.WRITE_WEIGHT" />
+    <uses-permission android:name="android.permission.health.WRITE_HEIGHT" />
+    <uses-permission android:name="android.permission.health.WRITE_BODY_FAT" />
+    <uses-permission android:name="android.permission.health.WRITE_LEAN_BODY_MASS" />
+    <uses-permission android:name="android.permission.health.WRITE_BONE_MASS" />
+    <uses-permission android:name="android.permission.health.WRITE_BODY_WATER_MASS" />
+    <uses-permission android:name="android.permission.health.WRITE_BLOOD_PRESSURE" />
+
     <!-- Screen Time Permission -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 

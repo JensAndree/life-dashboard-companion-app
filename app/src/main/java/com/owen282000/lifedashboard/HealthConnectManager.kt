@@ -6,12 +6,19 @@ import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.changes.DeletionChange
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.*
+import androidx.health.connect.client.records.metadata.Device
+import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ChangesTokenRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.health.connect.client.units.Length
+import androidx.health.connect.client.units.Mass
+import androidx.health.connect.client.units.Percentage
+import androidx.health.connect.client.units.Pressure
 import com.owen282000.lifedashboard.NutritionSupport.toNutritionData
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import kotlin.reflect.KClass
 
@@ -259,14 +266,17 @@ class HealthConnectManager(private val context: Context) {
     ): List<T> {
         try {
             val paged = readAllRecordsResilient(recordType, startTime, endTime)
-            val filtered = paged.records.filter {
+            val fresh = paged.records.filter {
                 lastSync == null || it.metadata.lastModifiedTime > lastSync
             }
+            // What this app wrote itself (Receive) came from Home Assistant and does not go
+            // back to it; see ownRecordsPartition for the watermark rule.
+            val (own, filtered) = ownRecordsPartition(fresh)
             val limited = ResilientReadLogic.capOldestFirst(filtered, type.maxRecordsPerSync) {
                 it.metadata.lastModifiedTime
             }
             if (limited.size < filtered.size) cappedTypes += type
-            limited.maxOfOrNull { it.metadata.lastModifiedTime }?.let { watermarks[type] = it }
+            watermarkFor(limited, own, capped = limited.size < filtered.size)?.let { watermarks[type] = it }
             val times = limited.map(timeOf)
             val rawTimes = paged.records.map(timeOf)
             recordDiag(
@@ -279,7 +289,8 @@ class HealthConnectManager(private val context: Context) {
                 error = skippedWindowsNote(paged.skippedWindows),
                 rawMinTime = rawTimes.minOrNull(),
                 rawMaxTime = rawTimes.maxOrNull(),
-                rawLatestModifiedTime = paged.records.maxOfOrNull { it.metadata.lastModifiedTime }
+                rawLatestModifiedTime = paged.records.maxOfOrNull { it.metadata.lastModifiedTime },
+                ownRecordsSkipped = own.size
             )
             return limited
         } catch (e: Exception) {
@@ -298,7 +309,8 @@ class HealthConnectManager(private val context: Context) {
         error: String? = null,
         rawMinTime: Instant? = null,
         rawMaxTime: Instant? = null,
-        rawLatestModifiedTime: Instant? = null
+        rawLatestModifiedTime: Instant? = null,
+        ownRecordsSkipped: Int = 0
     ) {
         diagnostics[type] = TypeDiagnostics(
             permissionGranted = false, // filled in later in readHealthData()
@@ -311,9 +323,38 @@ class HealthConnectManager(private val context: Context) {
             error = error,
             rawMinTime = rawMinTime,
             rawMaxTime = rawMaxTime,
-            rawLatestModifiedTime = rawLatestModifiedTime
+            rawLatestModifiedTime = rawLatestModifiedTime,
+            ownRecordsSkipped = ownRecordsSkipped
         )
     }
+
+    /**
+     * Splits records that are new since the watermark into the ones this app wrote itself and
+     * the rest. Records the app wrote came from Home Assistant through Receive (issue #62);
+     * sending them back would be an echo, and the receiver would hold a second copy of every
+     * measurement under a different uuid. Health Connect sets dataOrigin to the writing
+     * package and it cannot be forged, so the package name is the whole test; there is no
+     * setting, because nobody wants their own measurements returned to them.
+     */
+    private fun <T : Record> ownRecordsPartition(records: List<T>): Pair<List<T>, List<T>> {
+        val own = context.packageName
+        return records.partition { it.metadata.dataOrigin.packageName == own }
+    }
+
+    /**
+     * The watermark to store after a read: the newest modification time of the delivered
+     * batch, and of the skipped own records too when the type was not capped. Skipping an own
+     * record leaves it above the watermark, so without this it would be counted again on every
+     * sync; and when nothing was held back by the cap, every foreign record older than the
+     * newest own one has been delivered, so advancing past it skips nothing. When the type
+     * was capped the own records are ignored: a foreign record held back by the cap could sit
+     * between the delivered batch and the newest own record, and moving past it would lose it.
+     */
+    private fun <T : Record> watermarkFor(delivered: List<T>, own: List<T>, capped: Boolean): Instant? =
+        listOfNotNull(
+            delivered.maxOfOrNull { it.metadata.lastModifiedTime },
+            if (capped) null else own.maxOfOrNull { it.metadata.lastModifiedTime }
+        ).maxOrNull()
 
     /**
      * Deduplicated per-day totals for the last [days] full days plus today, computed with the
@@ -432,17 +473,18 @@ class HealthConnectManager(private val context: Context) {
             // Sample-carrying records are filtered and capped at RECORD granularity on their
             // modification time: a record is either fully delivered or fully deferred, ties at
             // the cap boundary are included, so the strict '>' watermark filter never skips one.
-            val newRecords = paged.records
-                .filter { lastSync == null || it.metadata.lastModifiedTime > lastSync }
+            val (own, newRecords) = ownRecordsPartition(
+                paged.records.filter { lastSync == null || it.metadata.lastModifiedTime > lastSync }
+            )
             val includedRecords = ResilientReadLogic.capRecordsBySamples(
                 newRecords,
                 HealthDataType.HEART_RATE.maxRecordsPerSync,
                 samplesOf = { it.samples.size },
                 timeOf = { it.metadata.lastModifiedTime }
             )
-            if (includedRecords.size < newRecords.size) cappedTypes += HealthDataType.HEART_RATE
-            includedRecords.maxOfOrNull { it.metadata.lastModifiedTime }
-                ?.let { watermarks[HealthDataType.HEART_RATE] = it }
+            val capped = includedRecords.size < newRecords.size
+            if (capped) cappedTypes += HealthDataType.HEART_RATE
+            watermarkFor(includedRecords, own, capped)?.let { watermarks[HealthDataType.HEART_RATE] = it }
             val limited = includedRecords.flatMap { record ->
                 record.samples.map { sample -> sample to record }
             }
@@ -454,7 +496,8 @@ class HealthConnectManager(private val context: Context) {
                 filteredRecordCount = limited.size,
                 minTime = times.minOrNull(),
                 maxTime = times.maxOrNull(),
-                error = skippedWindowsNote(paged.skippedWindows)
+                error = skippedWindowsNote(paged.skippedWindows),
+                ownRecordsSkipped = own.size
             )
             // Samples within one record share the record id; suffix the sample time so the
             // delivered uuid stays unique yet stable across re-sends.
@@ -622,8 +665,13 @@ class HealthConnectManager(private val context: Context) {
      * A token Health Connect refuses (expired after about 30 days without a sync) yields
      * [ChangesResult.expired] and a fresh token, so the caller can say in the payload that this
      * type may have missed a deletion.
+     *
+     * [ownRecordIds] are the metadata ids of records this app wrote itself (Receive, issue
+     * #62). A deletion change names only the id, not the package, so this is the only way to
+     * tell that a deleted record came from Home Assistant in the first place; those are left
+     * out, because Home Assistant withdrew them itself and does not need to hear it back.
      */
-    suspend fun readDeletions(type: HealthDataType, storedToken: String?): ChangesResult {
+    suspend fun readDeletions(type: HealthDataType, storedToken: String?, ownRecordIds: Set<String> = emptySet()): ChangesResult {
         if (!isHealthConnectAvailable()) {
             return ChangesResult(error = "Health Connect is not available")
         }
@@ -648,7 +696,9 @@ class HealthConnectManager(private val context: Context) {
                     break
                 }
                 response.changes.filterIsInstance<DeletionChange>().forEach { change ->
-                    deleted += DeletedRecord(DeletionTracking.payloadKey(type), change.recordId)
+                    if (change.recordId !in ownRecordIds) {
+                        deleted += DeletedRecord(DeletionTracking.payloadKey(type), change.recordId)
+                    }
                 }
                 token = response.nextChangesToken
                 if (!response.hasMore) break
@@ -674,6 +724,135 @@ class HealthConnectManager(private val context: Context) {
             // were read successfully, and a missing deletion is a smaller problem than no payload.
             ChangesResult(error = e.message ?: e::class.java.simpleName)
         }
+    }
+
+    // ==================== Write side (Receive, issue #62) ====================
+
+    /** The writable types whose WRITE permission is granted right now; the user can revoke one at any time. */
+    suspend fun grantedWriteTypes(): Set<WriteBackType> {
+        val granted = getGrantedPermissions()
+        return WriteBackType.entries.filter { it.writePermission in granted }.toSet()
+    }
+
+    /**
+     * The record for one validated reading. Throws IllegalArgumentException when Health
+     * Connect's own bounds refuse the value (the unit classes and the record constructors
+     * check them), which the caller reports as out_of_range for that one reading before
+     * anything is inserted.
+     */
+    fun recordFor(reading: PendingReading): Record {
+        val metadata = metadataFor(reading)
+        val zone = reading.zoneOffset ?: ZoneId.systemDefault().rules.getOffset(reading.time)
+        return when (reading.type) {
+            WriteBackType.WEIGHT -> WeightRecord(reading.time, zone, Mass.kilograms(reading.value), metadata)
+            WriteBackType.HEIGHT -> HeightRecord(reading.time, zone, Length.meters(reading.value), metadata)
+            WriteBackType.BODY_FAT -> BodyFatRecord(reading.time, zone, Percentage(reading.value), metadata)
+            WriteBackType.LEAN_BODY_MASS -> LeanBodyMassRecord(reading.time, zone, Mass.kilograms(reading.value), metadata)
+            WriteBackType.BONE_MASS -> BoneMassRecord(reading.time, zone, Mass.kilograms(reading.value), metadata)
+            WriteBackType.BODY_WATER_MASS -> BodyWaterMassRecord(reading.time, zone, Mass.kilograms(reading.value), metadata)
+            WriteBackType.BLOOD_PRESSURE -> BloodPressureRecord(
+                time = reading.time,
+                zoneOffset = zone,
+                metadata = metadata,
+                systolic = Pressure.millimetersOfMercury(reading.value),
+                diastolic = Pressure.millimetersOfMercury(
+                    reading.diastolic ?: throw IllegalArgumentException("blood pressure needs a diastolic value")
+                ),
+                bodyPosition = bodyPositionFor(reading.bodyPosition),
+                measurementLocation = measurementLocationFor(reading.measurementLocation)
+            )
+        }
+    }
+
+    /**
+     * Metadata that makes a repeat of the same reading an upsert instead of a duplicate: the
+     * integration's id is the clientRecordId and its version the clientRecordVersion, so a
+     * resend is ignored and a correction with a higher version overwrites. The device travels
+     * along when the reading was recorded by one; a value someone typed into Home Assistant
+     * is a manual entry.
+     */
+    private fun metadataFor(reading: PendingReading): Metadata = when (reading.recordingMethod) {
+        RecordingMethod.AUTO -> Metadata.autoRecorded(deviceFor(reading.device), reading.id, reading.version)
+        RecordingMethod.ACTIVE -> Metadata.activelyRecorded(deviceFor(reading.device), reading.id, reading.version)
+        RecordingMethod.MANUAL -> Metadata.manualEntry(reading.id, reading.version)
+    }
+
+    private fun deviceFor(device: ReadingDevice?): Device = Device(
+        manufacturer = device?.manufacturer,
+        model = device?.model,
+        type = when (device?.type) {
+            "watch" -> Device.TYPE_WATCH
+            "phone" -> Device.TYPE_PHONE
+            "scale" -> Device.TYPE_SCALE
+            "ring" -> Device.TYPE_RING
+            "head_mounted" -> Device.TYPE_HEAD_MOUNTED
+            "fitness_band" -> Device.TYPE_FITNESS_BAND
+            "chest_strap" -> Device.TYPE_CHEST_STRAP
+            "smart_display" -> Device.TYPE_SMART_DISPLAY
+            else -> Device.TYPE_UNKNOWN
+        }
+    )
+
+    private fun bodyPositionFor(key: String): Int = when (key) {
+        "standing_up" -> BloodPressureRecord.BODY_POSITION_STANDING_UP
+        "sitting_down" -> BloodPressureRecord.BODY_POSITION_SITTING_DOWN
+        "lying_down" -> BloodPressureRecord.BODY_POSITION_LYING_DOWN
+        "reclining" -> BloodPressureRecord.BODY_POSITION_RECLINING
+        else -> BloodPressureRecord.BODY_POSITION_UNKNOWN
+    }
+
+    private fun measurementLocationFor(key: String): Int = when (key) {
+        "left_wrist" -> BloodPressureRecord.MEASUREMENT_LOCATION_LEFT_WRIST
+        "right_wrist" -> BloodPressureRecord.MEASUREMENT_LOCATION_RIGHT_WRIST
+        "left_upper_arm" -> BloodPressureRecord.MEASUREMENT_LOCATION_LEFT_UPPER_ARM
+        "right_upper_arm" -> BloodPressureRecord.MEASUREMENT_LOCATION_RIGHT_UPPER_ARM
+        else -> BloodPressureRecord.MEASUREMENT_LOCATION_UNKNOWN
+    }
+
+    /**
+     * Inserts records in chunks of at most [MAX_RECORDS_PER_INSERT] and returns the metadata
+     * ids Health Connect assigned, in the order of [records]. Exceptions are the client's own
+     * (SecurityException for a missing permission, RemoteException for a quota or a service
+     * that does not answer) and are left to the caller to classify; each chunk is
+     * transactional, so a chunk that throws inserted nothing.
+     */
+    suspend fun insertRecords(records: List<Record>): List<String> {
+        if (records.isEmpty()) return emptyList()
+        val ids = mutableListOf<String>()
+        for (chunk in records.chunked(MAX_RECORDS_PER_INSERT)) {
+            ids += healthConnectClient.insertRecords(chunk).recordIdsList
+        }
+        return ids
+    }
+
+    /**
+     * Deletes records this app wrote, by their clientRecordId. Health Connect scopes client
+     * ids to the writing app, so this can never touch another app's records. An id Health
+     * Connect no longer holds makes the whole call throw; the caller treats that as done.
+     */
+    suspend fun deleteOwnRecords(type: WriteBackType, clientRecordIds: List<String>) {
+        if (clientRecordIds.isEmpty()) return
+        healthConnectClient.deleteRecords(type.dataType.recordClass, recordIdsList = emptyList(), clientRecordIdsList = clientRecordIds)
+    }
+
+    /**
+     * The other apps that wrote [type] to Health Connect in the last [days] days, by package
+     * name. Shown when a type is switched on under Receive: a scale app that already writes
+     * weight itself, plus the same weight from Home Assistant, is two readings a day. Empty
+     * when nothing else wrote, or when the read fails: a warning is never worth a failure.
+     */
+    suspend fun otherSourcesWriting(type: WriteBackType, days: Long = 7): List<String> = try {
+        val now = Instant.now()
+        val own = context.packageName
+        readAllRecords(type.dataType.recordClass, now.minus(Duration.ofDays(days)), now).records
+            .map { it.metadata.dataOrigin.packageName }
+            .filter { it != own }
+            .distinct()
+            .sorted()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        emptyList()
     }
 
     suspend fun requestPermissions(permissions: Set<String>): android.content.Intent {
@@ -720,17 +899,18 @@ class HealthConnectManager(private val context: Context) {
         try {
             val paged = readAllRecordsResilient(SkinTemperatureRecord::class, startTime, endTime)
             val rawSamples = paged.records.sumOf { it.deltas.size }
-            val newRecords = paged.records
-                .filter { lastSync == null || it.metadata.lastModifiedTime > lastSync }
+            val (own, newRecords) = ownRecordsPartition(
+                paged.records.filter { lastSync == null || it.metadata.lastModifiedTime > lastSync }
+            )
             val includedRecords = ResilientReadLogic.capRecordsBySamples(
                 newRecords,
                 HealthDataType.SKIN_TEMPERATURE.maxRecordsPerSync,
                 samplesOf = { it.deltas.size },
                 timeOf = { it.metadata.lastModifiedTime }
             )
-            if (includedRecords.size < newRecords.size) cappedTypes += HealthDataType.SKIN_TEMPERATURE
-            includedRecords.maxOfOrNull { it.metadata.lastModifiedTime }
-                ?.let { watermarks[HealthDataType.SKIN_TEMPERATURE] = it }
+            val capped = includedRecords.size < newRecords.size
+            if (capped) cappedTypes += HealthDataType.SKIN_TEMPERATURE
+            watermarkFor(includedRecords, own, capped)?.let { watermarks[HealthDataType.SKIN_TEMPERATURE] = it }
             val limited = includedRecords.flatMap { record ->
                 record.deltas.map { SkinSample(it, record.baseline, record.metadata.dataOrigin.packageName, "${record.metadata.id}#${it.time.toEpochMilli()}") }
             }
@@ -742,7 +922,8 @@ class HealthConnectManager(private val context: Context) {
                 filteredRecordCount = limited.size,
                 minTime = times.minOrNull(),
                 maxTime = times.maxOrNull(),
-                error = skippedWindowsNote(paged.skippedWindows)
+                error = skippedWindowsNote(paged.skippedWindows),
+                ownRecordsSkipped = own.size
             )
             return limited.map { s ->
                 SkinTemperatureData(s.delta.delta.inCelsius, s.baseline?.inCelsius, s.delta.time, s.source, s.uuid)
@@ -836,6 +1017,9 @@ class HealthConnectManager(private val context: Context) {
          * loop, not to ration it.
          */
         private const val MAX_CHANGES_PAGES = 100
+
+        /** Health Connect's documented limit for one insertRecords call. */
+        const val MAX_RECORDS_PER_INSERT = 1000
         private fun skippedWindowsNote(skippedWindows: Int): String? =
             if (skippedWindows > 0) {
                 "Skipped $skippedWindows unreadable window(s) of max " +

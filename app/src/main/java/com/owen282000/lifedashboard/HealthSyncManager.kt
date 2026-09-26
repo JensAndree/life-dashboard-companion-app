@@ -1078,6 +1078,7 @@ class HealthSyncManager(private val context: Context) {
                             put("max_time", diag.maxTime?.toString())
                             put("last_sync", diag.lastSync?.toString())
                             put("error", diag.error)
+                            put("own_records_skipped", diag.ownRecordsSkipped)
                         }
                     }
                 }

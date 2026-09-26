@@ -173,7 +173,12 @@ data class TypeDiagnostics(
     /** Timestamp range and newest modification time of everything Health Connect returned, before the watermark filter (issue #53). */
     val rawMinTime: Instant? = null,
     val rawMaxTime: Instant? = null,
-    val rawLatestModifiedTime: Instant? = null
+    val rawLatestModifiedTime: Instant? = null,
+    /**
+     * Records this app wrote itself (Receive, issue #62) that were new since the watermark and
+     * left out of the payload: what came from Home Assistant does not go back to it.
+     */
+    val ownRecordsSkipped: Int = 0
 )
 
 data class StepsData(

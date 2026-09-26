@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Debug builds only: write permissions for the types the seeding test inserts, so an emulator
-  without a watch can be given a week of Health Connect data. Release builds stay read-only.
+  without a watch can be given a week of Health Connect data. Release builds declare only the
+  seven write permissions of the Receive feature (see the main manifest); WRITE_WEIGHT is one
+  of those, so it no longer needs to be listed here.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.health.WRITE_STEPS" />
@@ -11,6 +13,5 @@
     <uses-permission android:name="android.permission.health.WRITE_DISTANCE" />
     <uses-permission android:name="android.permission.health.WRITE_ACTIVE_CALORIES_BURNED" />
     <uses-permission android:name="android.permission.health.WRITE_TOTAL_CALORIES_BURNED" />
-    <uses-permission android:name="android.permission.health.WRITE_WEIGHT" />
     <uses-permission android:name="android.permission.health.WRITE_MINDFULNESS" />
 </manifest>
