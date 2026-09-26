@@ -88,13 +88,33 @@ adb shell am instrument -w --no-hidden-api-checks -e class com.owen282000.lifeda
   com.owen282000.lifedashboard.fixture.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-Reruns update the same records: each carries a client record id per day and slot. The fixture grants itself its permissions through the same hidden call Health Connect's own dialog uses (hence `--no-hidden-api-checks`), which also registers it as a data source, so its records count in aggregates and the daily totals are real; without the flag it falls back to accepting the dialog. `adb shell pm grant` is not enough: inserts succeed, but the app is never registered as a data source, and the daily totals stay empty. `ClearFixtureData` in the same module deletes everything the fixture wrote (Health Connect keeps an uninstalled app's data). Never seed the AVD of the instrumented tests.
+Reruns update the same records: each carries a client record id per day and slot. The fixture grants itself its permissions through the same hidden call Health Connect's own dialog uses (hence `--no-hidden-api-checks`), which also registers it as a data source, so its records count in aggregates and the daily totals are real; without the flag it falls back to accepting the dialog. `adb shell pm grant` is not enough: inserts succeed, but the app is never registered as a data source, and the daily totals stay empty. `ClearFixtureData` in the same module deletes everything the fixture wrote (Health Connect keeps an uninstalled app's data). Never seed the suite's own AVD, see below.
 
 **Broker and Home Assistant in Docker.** `scripts/dev/docker-compose.yml` starts a Mosquitto broker without authentication on port 1883 and a Home Assistant on port 8123, with its configuration under `scripts/dev/ha-config/` (ignored by git). Point the app at `10.0.2.2` from an emulator, or at the laptop's LAN address from a phone, and the device appears under Settings > Devices & services > MQTT after the first sync.
 
 ```bash
 docker compose -f scripts/dev/docker-compose.yml up -d
 ```
+
+## Instrumented tests
+
+`app/src/androidTest` holds a suite that runs the real sync path on an Android runtime: Health Connect, the payload, the signature, the webhook receiver, the outbox, and Receive with a stand-in for the Home Assistant integration. One command runs it:
+
+```bash
+scripts/instrumented.sh                      # build, install, run everything
+scripts/instrumented.sh --class com.owen282000.lifedashboard.sync.OutboxTest
+scripts/instrumented.sh --no-build           # reuse the APKs already built
+```
+
+**Its own emulator.** Every test starts by wiping the app's settings, logs, outbox and its own Health Connect records, so the script only runs on an AVD named `ldc-instrumented` and refuses any other device unless you pass `--force`. When the AVD is missing it is created from the newest installed system image with API 34 or higher (a `google_apis` or `google_apis_playstore` image, which carry Health Connect); when it is not running it is started headless. An emulator with a setup you care about is never touched. Do not seed `ldc-instrumented` with the fixture: every delivery test asserts that each record it put into Health Connect arrives exactly once and that nothing else does, so data from another app fails it (the tests say so, and `ClearFixtureData` removes it).
+
+**What it needs.** The Android SDK (the script uses the SDK's own `adb`, found through `ANDROID_HOME` or `sdk.dir` in `local.properties`, never the one on `PATH`), python3, and a running Docker: the script starts its own Mosquitto (`ldc-instrumented-mosquitto`, anonymous, host port 18830 or `LDC_MQTT_PORT`) and forwards it to the emulator's `127.0.0.1:1883` with `adb reverse`, then stops it again. A broker you already run on 1883 is left alone.
+
+**How it runs.** APKs are installed with `adb install -r -t` and the tests started with `am instrument`, not `connectedDebugAndroidTest`, which uninstalls the app afterwards. The runner (`harness/LdTestRunner`) puts WorkManager in test mode before the app schedules anything, so no real sync worker runs next to a test. Health Connect permissions are granted by the tests themselves through the call Health Connect's dialog uses, which is hidden, so the script passes `--no-hidden-api-checks` and sets `hidden_api_policy` for the run.
+
+**Reading the result.** `adb`'s exit code says nothing about test results, so the output is parsed by `scripts/instrument_to_junit.py`. Everything lands in `build/instrumented/`: `summary.md` (one line per test), `junit.xml`, `raw.txt` (the instrumentation output), `logcat.txt`, and `witness/`, where a failed test leaves the requests the receiver got, schema errors and the like. In CI the same script runs in the `instrumented` job of `build.yml` on an API 36 emulator; the summary appears on the run page and the reports are uploaded as artifacts.
+
+**A hard check next to it.** `scripts/check-cancellation.sh` runs in the build job and fails on a `catch (e: Exception)`, `catch (e: Throwable)` or `runCatching` in suspend code that does not let a `CancellationException` through first. The cases that exist today are on its allowlist, per file; fixing one means lowering that number.
 
 ## Release builds and R8
 
