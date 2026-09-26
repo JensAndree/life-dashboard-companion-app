@@ -80,6 +80,8 @@ class HealthSyncManager(
                 Json.parseToJsonElement(payload)
             )
             Result.success(prettyPayload)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -366,7 +368,13 @@ class HealthSyncManager(
             // and shown in the MQTT settings section.
             lastDelivered?.let { data ->
                 val totalsForMqtt = if (publishToMqtt) {
-                    runCatching { healthConnectManager.readDailyTotals(days = 1, enabledTypes = enabledTypes) }.getOrDefault(emptyList())
+                    try {
+                        healthConnectManager.readDailyTotals(days = 1, enabledTypes = enabledTypes)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
                 } else emptyList()
                 MqttPublisher(context).publishHealthData(data, totalsForMqtt)
             }

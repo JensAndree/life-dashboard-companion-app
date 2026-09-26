@@ -28,19 +28,10 @@ cd "$(dirname "$0")/.."
 
 SRC="app/src/main/java"
 
-# Known hits per file. Every entry here is debt; lower the number when you fix one.
-# The first five files are the F1 fixes of P2-4 (the per-type reads, the workers, the backoff
-# delay of WebhookManager); MqttPublisher and SyncOps are mostly runCatching around JSON or a
-# test ping and may turn out harmless.
+# Known hits per file, as "path count". Every entry would be debt: lower the number when you
+# fix one, and do not add to it. Empty since the F1 fixes of P2-4 (the per-type reads, the
+# workers, the backoff delay of WebhookManager and the rest of the sync path).
 ALLOWLIST="
-app/src/main/java/com/owen282000/lifedashboard/HealthConnectManager.kt 36
-app/src/main/java/com/owen282000/lifedashboard/HealthSyncManager.kt 2
-app/src/main/java/com/owen282000/lifedashboard/HealthSyncWorker.kt 1
-app/src/main/java/com/owen282000/lifedashboard/ScreenTimeSyncManager.kt 2
-app/src/main/java/com/owen282000/lifedashboard/ScreenTimeSyncWorker.kt 1
-app/src/main/java/com/owen282000/lifedashboard/WebhookManager.kt 1
-app/src/main/java/com/owen282000/lifedashboard/MqttPublisher.kt 3
-app/src/main/java/com/owen282000/lifedashboard/viewmodel/SyncOps.kt 4
 "
 
 LIST=0

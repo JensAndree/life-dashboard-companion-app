@@ -38,6 +38,8 @@ class ScreenTimeSyncManager(private val context: Context) {
                 Json.parseToJsonElement(payload)
             )
             Result.success(prettyPayload)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -127,6 +129,8 @@ class ScreenTimeSyncManager(private val context: Context) {
             }
 
             Result.success(ScreenTimeSyncResult.Success(totalApps, screenTimeDataList.size))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }

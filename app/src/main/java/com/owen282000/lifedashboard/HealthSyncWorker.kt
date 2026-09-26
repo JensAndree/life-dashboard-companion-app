@@ -21,6 +21,8 @@ class HealthSyncWorker(
                 syncResult.isFailure -> Result.failure()
                 else -> Result.success() // No data case
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure()
         } finally {

@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- A sync that Android stopped while the webhook was slow to answer showed up in the Logs tab
+  as a failed delivery ("Job was cancelled"), and a stopped Screen Time sync did the same. A
+  stopped sync now simply stops: no failed row, no step towards the failure notification,
+  and what it had not delivered yet is sent by the next run.
+
 ## [1.20.0] - 2026-09-26
 
 ### Added

@@ -48,12 +48,16 @@ class RealHealthOps(private val context: Context) : HealthOps {
             HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> HcAvailability.NEEDS_UPDATE
             else -> HcAvailability.UNAVAILABLE
         }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
         HcAvailability.UNAVAILABLE
     }
 
     override suspend fun grantedPermissions(): Set<String> = try {
         HealthConnectManager(context).getGrantedPermissions()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
         emptySet()
     }
@@ -64,7 +68,7 @@ class RealHealthOps(private val context: Context) : HealthOps {
     override suspend fun backfill(days: Int, onProgress: (Int, Int) -> Unit) =
         HealthSyncManager(context).performBackfill(days, onProgress)
 
-    override suspend fun testPing(webhook: WebhookDraft): Result<Unit> = runCatching {
+    override suspend fun testPing(webhook: WebhookDraft): Result<Unit> = try {
         WebhookManager(
             webhookUrls = webhook.urls,
             context = context,
@@ -73,8 +77,11 @@ class RealHealthOps(private val context: Context) : HealthOps {
             logType = LogType.HEALTH_CONNECT,
             customHeaders = webhook.headers,
             signingSecret = webhook.secret.trim().ifBlank { null }
-        ).postData(testPingPayload("health_connect")).getOrThrow()
-        Unit
+        ).postData(testPingPayload("health_connect")).map { }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 }
 
@@ -83,7 +90,7 @@ class RealScreenTimeOps(private val context: Context, private val prefs: Prefere
     override suspend fun sync() = ScreenTimeSyncManager(context).performSync()
     override suspend fun preview() = ScreenTimeSyncManager(context).previewData()
 
-    override suspend fun testPing(webhook: WebhookDraft): Result<Unit> = runCatching {
+    override suspend fun testPing(webhook: WebhookDraft): Result<Unit> = try {
         WebhookManager(
             webhookUrls = webhook.urls,
             context = context,
@@ -92,7 +99,10 @@ class RealScreenTimeOps(private val context: Context, private val prefs: Prefere
             logType = LogType.SCREEN_TIME,
             customHeaders = webhook.headers,
             signingSecret = webhook.secret.trim().ifBlank { null }
-        ).postData(testPingPayload("screen_time")).getOrThrow()
-        Unit
+        ).postData(testPingPayload("screen_time")).map { }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 }

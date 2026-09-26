@@ -27,7 +27,6 @@ import com.owen282000.lifedashboard.harness.WorkGate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -108,10 +107,9 @@ class SchedulerChainTest {
      * run, and no trace of a failure, because a stop is not a failed sync. The run that follows
      * delivers, and the chain is still one chain.
      *
-     * Red on main: the CancellationException of the stop is caught by WebhookManager's
-     * catch-all around the backoff delay and logged as a failed delivery.
+     * Until F1 the CancellationException of the stop was caught by WebhookManager's catch-all
+     * around the backoff delay and logged as a failed delivery.
      */
-    @Ignore("F1: fixed in phase 3")
     @LargeTest
     @Test
     fun stoppedRunQueuesExactlyOneSuccessorAndLosesNothing() {

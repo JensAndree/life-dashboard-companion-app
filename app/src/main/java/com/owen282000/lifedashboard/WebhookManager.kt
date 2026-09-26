@@ -191,6 +191,8 @@ class WebhookManager(
                 "Failed after $MAX_RETRIES attempts (transient errors): $errorMessage", jsonPayload
             )
             Result.failure(lastException ?: IOException("Max retries exceeded"))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             logWebhookCall(url, timestamp, null, false, e.message, jsonPayload)
             Result.failure(e)

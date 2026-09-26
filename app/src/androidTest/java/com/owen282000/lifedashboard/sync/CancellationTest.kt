@@ -61,10 +61,9 @@ class CancellationTest {
     private val prefs get() = context.appPreferences()
 
     /**
-     * T50. Cancelled while the receiver has not answered. Red on main: WebhookManager catches
-     * the CancellationException thrown by its backoff delay and logs a failed delivery.
+     * T50. Cancelled while the receiver has not answered. WebhookManager used to catch
+     * the CancellationException thrown by its backoff delay and log a failed delivery (F1).
      */
-    @Ignore("F1: fixed in phase 3")
     @Test
     fun performSyncPropagatesCancellation() = runBlocking {
         TestSetup.health(receiver, setOf(STEPS))
@@ -95,10 +94,8 @@ class CancellationTest {
     }
 
     /**
-     * T51. The same for Screen Time, whose sync also catches everything. Red on main for the
-     * same reason as T50, plus ScreenTimeSyncManager's own catch-all.
+     * T51. The same for Screen Time, whose sync caught everything as well until F1.
      */
-    @Ignore("F1: fixed in phase 3")
     @Test
     fun screenTimeCancellation() = runBlocking {
         ScreenTimeUse.ensureToday()

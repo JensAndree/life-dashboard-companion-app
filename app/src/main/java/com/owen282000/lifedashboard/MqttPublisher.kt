@@ -69,7 +69,14 @@ class MqttPublisher(private val context: Context) {
         // Publish everything the app has ever mapped for this section, not only the types that
         // had new records this run, so a new broker or Home Assistant gets the whole device.
         val cached = preferencesManager.getMqttSensorCache(section)
-            ?.let { runCatching { Json.decodeFromString<List<MqttSensor>>(it) }.getOrNull() }
+            ?.let { cache ->
+                // Not runCatching: that would also catch a cancellation, were one ever to reach here.
+                try {
+                    Json.decodeFromString<List<MqttSensor>>(cache)
+                } catch (e: IllegalArgumentException) { // SerializationException is one
+                    null
+                }
+            }
             ?: emptyList()
         val sensors = MqttSupport.mergeSensors(cached, fresh)
         if (sensors.isNotEmpty()) preferencesManager.setMqttSensorCache(section, Json.encodeToString(sensors))
@@ -145,7 +152,7 @@ class MqttPublisher(private val context: Context) {
             try {
                 val appVersion = try {
                     context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
-                } catch (e: Exception) {
+                } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
                     "unknown"
                 }
                 // Retire sensors that older versions published under other keys, so Home
@@ -175,6 +182,8 @@ class MqttPublisher(private val context: Context) {
             }
             setStatus("OK: ${sensors.size} sensors published at ${Instant.now()}")
             Result.success(sensors.size)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             setStatus("Error: ${e.message ?: e.javaClass.simpleName}")
             Result.failure(e)
