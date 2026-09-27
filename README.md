@@ -128,8 +128,10 @@ Every record carries a `uuid` for deduplication and a `source` package name. Use
 | [docs/usage.md](docs/usage.md) | Requirements, installation, setup, troubleshooting |
 | [docs/webhook.md](docs/webhook.md) | Complete payload reference, delivery, retries, HMAC signing, backend examples |
 | [docs/settings-backup.md](docs/settings-backup.md) | Exporting and importing your configuration between devices |
+| [docs/brands/](docs/brands/README.md) | Fitbit, Garmin, Samsung and Gadgetbridge into Home Assistant without a cloud login, one page per brand |
 | [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) | What Fitbit, Cronometer, Health Sync, Zepp and Garmin do and do not write |
 | [PRIVACY.md](PRIVACY.md) | What the app reads, stores and sends, and to whom (nobody but you) |
+| [AI_POLICY.md](AI_POLICY.md) | How AI assistance is used in building the app, and the rules for contributions |
 | [docs/building.md](docs/building.md) | Build, project layout, contributing |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
@@ -155,7 +157,7 @@ Built on the work of others:
 - [HC Webhook](https://github.com/mcnaveen/health-connect-webhook) by mcnaveen, for early inspiration on Health Connect integration patterns
 - Everyone who has filed an issue with a payload dump or a source-app quirk; most of [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) comes from those reports
 - The quantified self and self-hosting communities
-- [Claude Code](https://claude.com/claude-code) for assistance with development
+- [Claude Code](https://claude.com/claude-code) for assistance with development; [AI_POLICY.md](AI_POLICY.md) explains how it is used and how every change is checked
 
 ## Getting help
 

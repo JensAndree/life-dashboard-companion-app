@@ -12,5 +12,6 @@
 - [ ] Payload format unchanged, or [docs/webhook.md](../docs/webhook.md) and
       [docs/webhook-schema.json](../docs/webhook-schema.json) updated to match. The schema is
       shared with the iOS app, so changes there need a good reason
+- [ ] AI assistance, if any, is named in the description above ([AI_POLICY.md](../AI_POLICY.md))
 - [ ] No secrets or health data in logs
 - [ ] Documentation updated if behaviour or configuration changed
