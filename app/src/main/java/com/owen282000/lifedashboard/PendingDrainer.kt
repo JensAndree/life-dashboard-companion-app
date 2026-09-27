@@ -18,6 +18,7 @@ object PendingDrainer {
         val preferencesManager = PreferencesManager(context)
         for (item in items) {
             val isScreenTime = item.logType == LogType.SCREEN_TIME.name
+            val logType = if (isScreenTime) LogType.SCREEN_TIME else LogType.HEALTH_CONNECT
             val urls = if (isScreenTime) preferencesManager.getScreenTimeWebhookUrls()
                        else preferencesManager.getHealthWebhookUrls()
             if (urls.isEmpty()) continue
@@ -27,7 +28,7 @@ object PendingDrainer {
                 context = context,
                 dataType = item.dataType,
                 recordCount = item.recordCount,
-                logType = if (isScreenTime) LogType.SCREEN_TIME else LogType.HEALTH_CONNECT,
+                logType = logType,
                 customHeaders = if (isScreenTime) preferencesManager.getScreenTimeWebhookHeaders()
                                 else preferencesManager.getHealthWebhookHeaders(),
                 signingSecret = if (isScreenTime) preferencesManager.getScreenTimeWebhookSecret()
@@ -36,6 +37,13 @@ object PendingDrainer {
 
             if (webhookManager.postData(item.payload).isSuccess) {
                 store.remove(item.id)
+                // A drained payload is a delivery like any other: it ends the failure streak
+                // and moves "Last sync". Without this, an outage followed by a sync with no
+                // new data left the failure notification and a red status in place while the
+                // queued data had in fact arrived (F5 of P2-4). Its records count for today
+                // now, since the failed attempt that queued it counted none.
+                SyncFailureNotifier.recordResult(context, logType, true)
+                SyncStatusStore.record(context, true, item.recordCount, logType)
             } else {
                 store.recordAttempt(item)
                 break

@@ -265,7 +265,6 @@ class OutboxTest {
      * sync" moves. Red on main: PendingDrainer tells neither SyncFailureNotifier nor
      * SyncStatusStore, so after an outage without new data the failure notification stays.
      */
-    @Ignore("F5: fixed in phase 3")
     @Test
     fun drainEndsTheFailureStreak() = runBlocking {
         TestSetup.health(receiver, setOf(STEPS))

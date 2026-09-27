@@ -21,6 +21,9 @@ All notable changes to this project are documented in this file. The format is b
   set, count the samples of a still-open window twice: once from what it had stored and once
   from the next read. That window is now stored at the same moment as the sync's progress, so
   an interrupted sync leaves both as they were.
+- After an outage, a sync that only delivered what had been queued left the failure
+  notification, the red status and the old "Last sync" in place, although the data had
+  arrived. Delivering queued data now counts as a successful sync.
 
 ## [1.20.0] - 2026-09-26
 
