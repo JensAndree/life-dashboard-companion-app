@@ -17,6 +17,8 @@ Release signing is described in [KEYSTORE_SETUP.md](KEYSTORE_SETUP.md). Releases
 
 ## Releasing
 
+Before a release that touches the sync path, go through the [release checklist](release-checklist.md): the steps an emulator cannot cover, such as an update over the previous release and one night in the background on a real phone.
+
 1. Add a `## [X.Y.Z]` section to [CHANGELOG.md](../CHANGELOG.md)
 2. Prepare the release files and commit them:
 
@@ -120,7 +122,7 @@ scripts/instrumented.sh --smoke-only         # only the background smoke run
 
 **The background smoke run.** Under instrumentation the app counts as in the foreground, so no test above meets Health Connect's rule for background reads. The script therefore ends with one check outside JUnit: the fixture seeds four foreign records, `BackgroundSmokeSetup` points the app at `scripts/webhook-receiver.py` on the host, a broadcast to WorkManager's diagnostics receiver starts the app's process without an activity so the real WorkManager plans a run, and `cmd jobscheduler run -f` runs that job while the app is in the background. The receiver must get exactly the fixture's records, signed.
 
-**A hard check next to it.** `scripts/check-cancellation.sh` runs in the build job and fails on a `catch (e: Exception)`, `catch (e: Throwable)` or `runCatching` in suspend code that does not let a `CancellationException` through first. The cases that exist today are on its allowlist, per file; fixing one means lowering that number.
+**A hard check next to it.** `scripts/check-cancellation.sh` runs in the build job and fails on a `catch (e: Exception)`, `catch (e: Throwable)` or `runCatching` in suspend code that does not let a `CancellationException` through first. Its allowlist, per file, is empty and stays that way: a new case is fixed, not listed. A swallowed cancellation makes a stopped worker log a failed delivery and carry on instead of stopping.
 
 ## Release builds and R8
 

@@ -101,7 +101,7 @@ class SyncCapTest {
 
     @Test
     fun aWatermarkWithoutIdStillMeansEverythingAtItsTimeWasRead() {
-        // What every watermark stored before 1.21.0 looks like: a time, no id.
+        // What every watermark stored before the id existed looks like: a time, no id.
         val old = Watermark(base)
         assertFalse(old.admits(base, "0000"))
         assertFalse(old.admits(base, "zzzz"))
