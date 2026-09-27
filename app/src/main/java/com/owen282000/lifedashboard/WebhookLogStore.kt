@@ -55,7 +55,7 @@ class WebhookLogStore(private val context: Context) {
      * Adds [log], newest first, storing its payload separately. Returns after evicting whatever
      * exceeds the entry and byte caps.
      */
-    fun add(log: WebhookLog, keepFullPayloads: Boolean) {
+    fun add(log: WebhookLog, keepFullPayloads: Boolean) = synchronized(LOCK) {
         val payload = log.rawPayload
         if (!payload.isNullOrEmpty()) {
             runCatching { payloadFile(log.id).writeText(payloadToStore(payload, keepFullPayloads)) }
@@ -100,11 +100,11 @@ class WebhookLogStore(private val context: Context) {
     }
 
     /** Clears every log, or only those of [filterType]. */
-    fun clear(filterType: LogType? = null) {
+    fun clear(filterType: LogType? = null) = synchronized(LOCK) {
         if (filterType == null) {
             prefs.edit().remove(KEY_ENTRIES).apply()
             payloadDir.listFiles()?.forEach { it.delete() }
-            return
+            return@synchronized
         }
         val remaining = readEntries().filterNot { it.logType == filterType.name }
         writeEntries(remaining)
@@ -119,8 +119,8 @@ class WebhookLogStore(private val context: Context) {
      * dropped rather than migrated: they are the bulk of the data, they are raw health records,
      * and the entries they belong to are about to age out anyway.
      */
-    fun migrateFromLegacyPrefs(legacyPrefs: android.content.SharedPreferences) {
-        val legacyJson = legacyPrefs.getString(LEGACY_KEY_WEBHOOK_LOGS, null) ?: return
+    fun migrateFromLegacyPrefs(legacyPrefs: android.content.SharedPreferences) = synchronized(LOCK) {
+        val legacyJson = legacyPrefs.getString(LEGACY_KEY_WEBHOOK_LOGS, null) ?: return@synchronized
         runCatching {
             val legacy = Json.decodeFromString<List<WebhookLog>>(legacyJson)
             if (readEntries().isEmpty() && legacy.isNotEmpty()) {
@@ -131,6 +131,15 @@ class WebhookLogStore(private val context: Context) {
     }
 
     companion object {
+        /**
+         * One lock for every store in the process. Adding is read, prepend, write: a Health
+         * Connect sync, a Screen Time sync and Receive log from their own threads, each through
+         * its own [WebhookLogStore], and without the lock one of two rows written at the same
+         * moment was lost. Eviction also deleted the payload file of a row another thread had
+         * written but not listed yet.
+         */
+        private val LOCK = Any()
+
         private const val LOGS_PREFS_NAME = "life_dashboard_logs"
         private const val PAYLOAD_DIR = "webhook_payloads"
         private const val KEY_ENTRIES = "entries"

@@ -136,4 +136,38 @@ class LogsTest {
         assertEquals(2, prefs.getWebhookLogs(LogType.HEALTH_CONNECT).size)
         assertEquals(2, prefs.getWebhookLogs().size)
     }
+
+    @Test
+    fun rowsWrittenAtTheSameTimeAreAllKept() {
+        // A Health Connect sync, a Screen Time sync and Receive log from their own threads,
+        // each through its own store. Every row and its payload must survive the overlap.
+        val threads = 8
+        val perThread = 10
+        val ids = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val start = java.util.concurrent.CountDownLatch(1)
+        val workers = (1..threads).map { t ->
+            kotlin.concurrent.thread {
+                start.await()
+                repeat(perThread) {
+                    val id = UUID.randomUUID().toString()
+                    ids.add(id)
+                    WebhookLogStore(context).add(
+                        WebhookLog(
+                            id = id, timestamp = System.currentTimeMillis(), url = "https://example.invalid/$t",
+                            statusCode = 200, success = true, errorMessage = null, dataType = "test",
+                            recordCount = 1, rawPayload = """{"thread":$t}"""
+                        ),
+                        keepFullPayloads = false
+                    )
+                }
+            }
+        }
+        start.countDown()
+        workers.forEach { it.join() }
+
+        val rows = WebhookLogStore(context).getAll()
+        assertEquals(threads * perThread, rows.size)
+        assertEquals(ids.toSet(), rows.map { it.id }.toSet())
+        assertTrue(rows.all { it.rawPayload != null })
+    }
 }
