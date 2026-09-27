@@ -12,6 +12,11 @@ All notable changes to this project are documented in this file. The format is b
   and what it had not delivered yet is sent by the next run.
 - A stopped sync could keep the worker waiting for up to ten seconds, until the webhook's
   read timeout, before it let go. The request is now cancelled together with the sync.
+- A scheduled sync that found Health Connect not answering, as can happen while the phone
+  dozes, waited for it without limit while reading records or the day totals, the same way
+  the deletion step did before 1.18.1. Every Health Connect call in the read step now gives up
+  after ten seconds and the whole step after two minutes; a type that did not fit keeps its
+  place and is read by the next sync, and `_diagnostics` says why in its `error`.
 
 ## [1.20.0] - 2026-09-26
 

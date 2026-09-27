@@ -371,7 +371,7 @@ Every payload ends with a `_diagnostics` object with one entry per enabled type,
 }
 ```
 
-`raw_*` describes everything Health Connect returned for the query window; `filtered_record_count` and `min_time`/`max_time` describe what this payload delivered. When `raw_latest_modified_time` is older than `last_sync`, the source app has not written anything new yet. See [DATA_SOURCES.md](DATA_SOURCES.md) for what individual source apps do and do not write.
+`raw_*` describes everything Health Connect returned for the query window; `filtered_record_count` and `min_time`/`max_time` describe what this payload delivered. When `raw_latest_modified_time` is older than `last_sync`, the source app has not written anything new yet. An `error` of "Health Connect did not return ... within 10 s" or "skipped: the read step used its budget" means Health Connect did not answer in time; that type keeps its place and the next sync reads it. See [DATA_SOURCES.md](DATA_SOURCES.md) for what individual source apps do and do not write.
 
 ## Screen Time payload
 

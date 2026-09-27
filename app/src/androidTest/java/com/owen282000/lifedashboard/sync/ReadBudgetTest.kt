@@ -25,7 +25,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -36,7 +35,7 @@ import org.junit.runner.RunWith
  * step and the Receive write step have budgets since 1.18.1 and 1.20.0; the ordinary read
  * and the daily totals do not, so a dozing phone whose Health Connect hangs holds the sync,
  * and with it the worker, as the deletion step did in 1.18.0. Both tests expect the budget
- * the SPEC asks for: per type and in total, like the deletion step (5 s and 20 s).
+ * of HealthConnectManager: 10 s per Health Connect call and 120 s for the whole read step.
  */
 @RunWith(AndroidJUnit4::class)
 @LargeTest
@@ -52,10 +51,9 @@ class ReadBudgetTest {
 
     /**
      * Every readRecords call hangs. The sync must come back within its budget, move no
-     * watermark, and say in the log what it could not read. Red on main: it never comes
-     * back ("the sync came back within 45 s" fails after 45 s).
+     * watermark, and say in the log what it could not read. Red before F3: it never came
+     * back ("the sync came back within 45 s" failed after 45 s).
      */
-    @Ignore("F3: fixed in phase 3")
     @Test
     fun readStepHonoursABudget() = runBlocking {
         TestSetup.health(receiver, setOf(STEPS, WEIGHT))
@@ -69,16 +67,15 @@ class ReadBudgetTest {
         val took = System.currentTimeMillis() - started
 
         assertNotNull("the sync came back within 45 s", result)
-        assertTrue("within the 20 s budget and some margin, took $took ms", took < 30_000)
+        assertTrue("two calls of 10 s and some margin, took $took ms", took < 30_000)
         assertNull(context.appPreferences().getHealthLastSyncTimestamp(STEPS))
         assertNull(context.appPreferences().getHealthLastSyncTimestamp(WEIGHT))
     }
 
     /**
      * The daily totals aggregate hangs while the records read fine. The records must still go
-     * out, within the budget. Red on main: the sync never comes back.
+     * out, within the budget. Red before F3: the sync never came back.
      */
-    @Ignore("F3: fixed in phase 3")
     @Test
     fun dailyTotalsHonourABudget() = runBlocking {
         TestSetup.health(receiver, setOf(STEPS))

@@ -16,6 +16,7 @@ import androidx.health.connect.client.units.Mass
 import androidx.health.connect.client.units.Percentage
 import androidx.health.connect.client.units.Pressure
 import com.owen282000.lifedashboard.NutritionSupport.toNutritionData
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -69,7 +70,8 @@ class HealthConnectManager(
             diagnostics.clear()
             watermarks.clear()
             cappedTypes.clear()
-            val grantedPermissions = getGrantedPermissions()
+            readStartedAt = System.currentTimeMillis()
+            val grantedPermissions = bounded("the granted permissions") { getGrantedPermissions() }
             val endTime = windowEnd ?: Instant.now()
             val startTime = windowStart ?: endTime.minus(LOOKBACK_HOURS, ChronoUnit.HOURS)
 
@@ -212,14 +214,41 @@ class HealthConnectManager(
      * a failure of the type; it goes through, so a stopped worker stops here and not after
      * reading every other type too.
      */
-    private suspend fun <T> readType(type: HealthDataType, read: suspend () -> List<T>): List<T> = try {
-        read()
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        if (diagnostics[type]?.error == null) recordDiag(type = type, error = e.message ?: e.javaClass.simpleName)
-        emptyList()
+    /** When the current [readHealthData] started, for [READ_BUDGET_MS]. */
+    private var readStartedAt = 0L
+
+    /**
+     * One type's read. A type that errors, a Health Connect call inside it that does not answer
+     * within [CALL_TIMEOUT_MS], or a type that starts after the whole read step has used
+     * [READ_BUDGET_MS], comes back empty with the reason in its `_diagnostics.error`. It sets no
+     * watermark, so the next sync reads the same records again: nothing is skipped, only late.
+     */
+    private suspend fun <T> readType(type: HealthDataType, read: suspend () -> List<T>): List<T> {
+        if (System.currentTimeMillis() - readStartedAt >= READ_BUDGET_MS) {
+            recordDiag(type = type, error = "skipped: the read step used its budget of ${READ_BUDGET_MS / 1000} s")
+            return emptyList()
+        }
+        return try {
+            read()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (diagnostics[type]?.error == null) recordDiag(type = type, error = e.message ?: e.javaClass.simpleName)
+            emptyList()
+        }
     }
+
+    /**
+     * A Health Connect call that gives up after [CALL_TIMEOUT_MS]. A scheduled run that starts
+     * while the phone dozes can find Health Connect cold and a call that never returns; a hang
+     * is not an exception, so without a bound it would hold the sync until Android stopped the
+     * worker, the way the deletion step did in 1.18.0. The limit is per call rather than per
+     * type: a large backlog that keeps returning pages is slow but fine, one page that does not
+     * come back is not. Never [kotlinx.coroutines.withTimeout], whose exception is a
+     * cancellation and would stop the sync instead of skipping one type.
+     */
+    private suspend fun <R : Any> bounded(what: String, call: suspend () -> R): R =
+        withTimeoutOrNull(CALL_TIMEOUT_MS) { call() } ?: throw HealthConnectTimeoutException(what, CALL_TIMEOUT_MS)
 
     /**
      * Reads all records with the bisection fallback from [ResilientReadLogic.readResilient],
@@ -259,7 +288,7 @@ class HealthConnectManager(
                 timeRangeFilter = TimeRangeFilter.between(startTime, endTime),
                 pageToken = pageToken
             )
-            val response = healthConnectClient.readRecords(request)
+            val response = bounded("a page of ${recordType.simpleName}") { healthConnectClient.readRecords(request) }
             records.addAll(response.records)
             pageCount++
             // Health Connect can signal completion with an empty token as well as null.
@@ -399,13 +428,17 @@ class HealthConnectManager(
         if (metrics.isEmpty() || !start.isBefore(end)) return emptyList()
 
         return try {
-            val response = healthConnectClient.aggregateGroupByPeriod(
-                androidx.health.connect.client.request.AggregateGroupByPeriodRequest(
-                    metrics = metrics,
-                    timeRangeFilter = TimeRangeFilter.between(start, end),
-                    timeRangeSlicer = java.time.Period.ofDays(1)
+            // Bounded like every read: daily totals that do not come back are left out of this
+            // payload rather than holding the records behind them.
+            val response = bounded("the daily totals") {
+                healthConnectClient.aggregateGroupByPeriod(
+                    androidx.health.connect.client.request.AggregateGroupByPeriodRequest(
+                        metrics = metrics,
+                        timeRangeFilter = TimeRangeFilter.between(start, end),
+                        timeRangeSlicer = java.time.Period.ofDays(1)
+                    )
                 )
-            )
+            }
             response.map { bucket ->
                 DailyTotals(
                     date = bucket.startTime.toLocalDate().toString(),
@@ -1032,6 +1065,15 @@ class HealthConnectManager(
     companion object {
         private const val LOOKBACK_HOURS = 168L // 7 days
 
+        /** How long one Health Connect call may take before the read gives it up; see [bounded]. */
+        const val CALL_TIMEOUT_MS = 10_000L
+
+        /**
+         * The whole read step of one pass. Generous, a backstop rather than a ration: types
+         * that have not started when it runs out are skipped this sync and read the next.
+         */
+        const val READ_BUDGET_MS = 120_000L
+
         /**
          * Pages of one type's changes feed read per sync. Generous: a page holds many changes,
          * and a month of deletions for one type fits well inside this. It exists to bound the
@@ -1072,3 +1114,7 @@ class HealthConnectManager(
                 setOf(BACKGROUND_PERMISSION, HISTORY_PERMISSION)
     }
 }
+
+/** A Health Connect call that did not answer in time; see HealthConnectManager.bounded. */
+class HealthConnectTimeoutException(what: String, timeoutMs: Long) :
+    java.io.IOException("Health Connect did not return $what within ${timeoutMs / 1000} s")
