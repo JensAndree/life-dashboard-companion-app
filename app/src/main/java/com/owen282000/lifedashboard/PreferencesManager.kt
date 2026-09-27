@@ -183,6 +183,7 @@ class PreferencesManager(context: Context) {
 
         // Health Connect keys
         private const val KEY_HEALTH_LAST_SYNC_TS_PREFIX = "health_last_sync_ts_"
+        private const val KEY_HEALTH_LAST_SYNC_TIE_PREFIX = "health_last_sync_tie_"
         private const val KEY_HEALTH_SYNC_INTERVAL_MINUTES = "health_sync_interval_minutes"
 
         /**
@@ -335,8 +336,19 @@ class PreferencesManager(context: Context) {
         return if (timestamp == -1L) null else timestamp
     }
 
-    fun setHealthLastSyncTimestamp(type: HealthDataType, timestamp: Long) {
-        prefs.edit().putLong(KEY_HEALTH_LAST_SYNC_TS_PREFIX + type.name, timestamp).apply()
+    /** How far [type] was read, see [Watermark]; null before its first sync. */
+    fun getHealthWatermark(type: HealthDataType): Watermark? {
+        val time = getHealthLastSyncTimestamp(type) ?: return null
+        return Watermark(java.time.Instant.ofEpochMilli(time), prefs.getString(KEY_HEALTH_LAST_SYNC_TIE_PREFIX + type.name, null))
+    }
+
+    /** Stores the time and the id together, so a watermark is never half old and half new. */
+    fun setHealthWatermark(type: HealthDataType, watermark: Watermark) {
+        prefs.edit().apply {
+            putLong(KEY_HEALTH_LAST_SYNC_TS_PREFIX + type.name, watermark.time.toEpochMilli())
+            if (watermark.tieId == null) remove(KEY_HEALTH_LAST_SYNC_TIE_PREFIX + type.name)
+            else putString(KEY_HEALTH_LAST_SYNC_TIE_PREFIX + type.name, watermark.tieId)
+        }.apply()
     }
 
     /** The stored changes token for [type], or null when there is none yet. */

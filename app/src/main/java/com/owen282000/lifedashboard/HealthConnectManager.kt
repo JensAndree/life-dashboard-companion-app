@@ -49,7 +49,7 @@ class HealthConnectManager(
     // batch. Stored by HealthSyncManager after the payload is read, so late backfills (whose
     // modification time is recent even when their record timestamps are old) are picked up
     // by the next sync instead of being skipped forever.
-    private val watermarks = mutableMapOf<HealthDataType, Instant>()
+    private val watermarks = mutableMapOf<HealthDataType, Watermark>()
 
     // Types whose eligible records exceeded the per-sync cap in the current read; the sync
     // loop uses this to keep draining the backlog instead of waiting for the next scheduled run.
@@ -62,7 +62,7 @@ class HealthConnectManager(
      */
     suspend fun readHealthData(
         enabledTypes: Set<HealthDataType>,
-        lastSyncTimestamps: Map<HealthDataType, Instant?>,
+        lastSyncTimestamps: Map<HealthDataType, Watermark?>,
         windowStart: Instant? = null,
         windowEnd: Instant? = null
     ): Result<HealthData> {
@@ -159,7 +159,7 @@ class HealthConnectManager(
                     error = null
                 )).copy(
                     permissionGranted = granted,
-                    lastSync = lastSyncTimestamps[type]
+                    lastSync = lastSyncTimestamps[type]?.time
                 )
             }
 
@@ -314,20 +314,23 @@ class HealthConnectManager(
         recordType: KClass<T>,
         startTime: Instant,
         endTime: Instant,
-        lastSync: Instant?,
+        lastSync: Watermark?,
         timeOf: (T) -> Instant
     ): List<T> {
         try {
             val paged = readAllRecordsResilient(recordType, startTime, endTime)
             val fresh = paged.records.filter {
-                lastSync == null || it.metadata.lastModifiedTime > lastSync
+                lastSync == null || lastSync.admits(it.metadata.lastModifiedTime, it.metadata.id)
             }
             // What this app wrote itself (Receive) came from Home Assistant and does not go
             // back to it; see ownRecordsPartition for the watermark rule.
             val (own, filtered) = ownRecordsPartition(fresh)
-            val limited = ResilientReadLogic.capOldestFirst(filtered, type.maxRecordsPerSync) {
-                it.metadata.lastModifiedTime
-            }
+            val limited = ResilientReadLogic.capOldestFirst(
+                filtered,
+                type.maxRecordsPerSync,
+                timeOf = { it.metadata.lastModifiedTime },
+                idOf = { it.metadata.id }
+            )
             if (limited.size < filtered.size) cappedTypes += type
             watermarkFor(limited, own, capped = limited.size < filtered.size)?.let { watermarks[type] = it }
             val times = limited.map(timeOf)
@@ -395,8 +398,8 @@ class HealthConnectManager(
         }
     }
 
-    private fun <T : Record> watermarkFor(delivered: List<T>, own: List<T>, capped: Boolean): Instant? =
-        ResilientReadLogic.watermarkAfter(delivered, own, capped) { it.metadata.lastModifiedTime }
+    private fun <T : Record> watermarkFor(delivered: List<T>, own: List<T>, capped: Boolean): Watermark? =
+        ResilientReadLogic.watermarkAfter(delivered, own, capped, timeOf = { it.metadata.lastModifiedTime }, idOf = { it.metadata.id })
 
     /**
      * Deduplicated per-day totals for the last [days] full days plus today, computed with the
@@ -476,7 +479,7 @@ class HealthConnectManager(
     private suspend fun readStepsData(
         startTime: Instant,
         endTime: Instant,
-        lastSync: Instant?
+        lastSync: Watermark?
     ): List<StepsData> {
         return readFiltered(HealthDataType.STEPS, StepsRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { record ->
@@ -493,7 +496,7 @@ class HealthConnectManager(
     private suspend fun readSleepData(
         startTime: Instant,
         endTime: Instant,
-        lastSync: Instant?
+        lastSync: Watermark?
     ): List<SleepData> {
         return readFiltered(HealthDataType.SLEEP, SleepSessionRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { record ->
@@ -516,21 +519,22 @@ class HealthConnectManager(
             }
     }
 
-    private suspend fun readHeartRateData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<HeartRateData> {
+    private suspend fun readHeartRateData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<HeartRateData> {
         try {
             val paged = readAllRecordsResilient(HeartRateRecord::class, startTime, endTime)
             val rawSamples = paged.records.sumOf { it.samples.size }
             // Sample-carrying records are filtered and capped at RECORD granularity on their
-            // modification time: a record is either fully delivered or fully deferred, ties at
-            // the cap boundary are included, so the strict '>' watermark filter never skips one.
+            // modification time and id: a record is either fully delivered or fully deferred,
+            // and the watermark resumes right after the last one taken.
             val (own, newRecords) = ownRecordsPartition(
-                paged.records.filter { lastSync == null || it.metadata.lastModifiedTime > lastSync }
+                paged.records.filter { lastSync == null || lastSync.admits(it.metadata.lastModifiedTime, it.metadata.id) }
             )
             val includedRecords = ResilientReadLogic.capRecordsBySamples(
                 newRecords,
                 HealthDataType.HEART_RATE.maxRecordsPerSync,
                 samplesOf = { it.samples.size },
-                timeOf = { it.metadata.lastModifiedTime }
+                timeOf = { it.metadata.lastModifiedTime },
+                idOf = { it.metadata.id }
             )
             val capped = includedRecords.size < newRecords.size
             if (capped) cappedTypes += HealthDataType.HEART_RATE
@@ -565,77 +569,77 @@ class HealthConnectManager(
         }
     }
 
-    private suspend fun readDistanceData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<DistanceData> {
+    private suspend fun readDistanceData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<DistanceData> {
         return readFiltered(HealthDataType.DISTANCE, DistanceRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { DistanceData(it.distance.inMeters, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readActiveCaloriesData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<ActiveCaloriesData> {
+    private suspend fun readActiveCaloriesData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<ActiveCaloriesData> {
         return readFiltered(HealthDataType.ACTIVE_CALORIES, ActiveCaloriesBurnedRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { ActiveCaloriesData(it.energy.inKilocalories, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readTotalCaloriesData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<TotalCaloriesData> {
+    private suspend fun readTotalCaloriesData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<TotalCaloriesData> {
         return readFiltered(HealthDataType.TOTAL_CALORIES, TotalCaloriesBurnedRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { TotalCaloriesData(it.energy.inKilocalories, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readWeightData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<WeightData> {
+    private suspend fun readWeightData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<WeightData> {
         return readFiltered(HealthDataType.WEIGHT, WeightRecord::class, startTime, endTime, lastSync) { it.time }
             .map { WeightData(it.weight.inKilograms, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readHeightData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<HeightData> {
+    private suspend fun readHeightData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<HeightData> {
         return readFiltered(HealthDataType.HEIGHT, HeightRecord::class, startTime, endTime, lastSync) { it.time }
             .map { HeightData(it.height.inMeters, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readBloodPressureData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BloodPressureData> {
+    private suspend fun readBloodPressureData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BloodPressureData> {
         return readFiltered(HealthDataType.BLOOD_PRESSURE, BloodPressureRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BloodPressureData(it.systolic.inMillimetersOfMercury, it.diastolic.inMillimetersOfMercury, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readBloodGlucoseData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BloodGlucoseData> {
+    private suspend fun readBloodGlucoseData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BloodGlucoseData> {
         return readFiltered(HealthDataType.BLOOD_GLUCOSE, BloodGlucoseRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BloodGlucoseData(it.level.inMillimolesPerLiter, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readOxygenSaturationData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<OxygenSaturationData> {
+    private suspend fun readOxygenSaturationData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<OxygenSaturationData> {
         return readFiltered(HealthDataType.OXYGEN_SATURATION, OxygenSaturationRecord::class, startTime, endTime, lastSync) { it.time }
             .map { OxygenSaturationData(it.percentage.value, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readBodyTemperatureData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BodyTemperatureData> {
+    private suspend fun readBodyTemperatureData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BodyTemperatureData> {
         return readFiltered(HealthDataType.BODY_TEMPERATURE, BodyTemperatureRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BodyTemperatureData(it.temperature.inCelsius, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readRespiratoryRateData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<RespiratoryRateData> {
+    private suspend fun readRespiratoryRateData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<RespiratoryRateData> {
         return readFiltered(HealthDataType.RESPIRATORY_RATE, RespiratoryRateRecord::class, startTime, endTime, lastSync) { it.time }
             .map { RespiratoryRateData(it.rate, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readRestingHeartRateData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<RestingHeartRateData> {
+    private suspend fun readRestingHeartRateData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<RestingHeartRateData> {
         return readFiltered(HealthDataType.RESTING_HEART_RATE, RestingHeartRateRecord::class, startTime, endTime, lastSync) { it.time }
             .map { RestingHeartRateData(it.beatsPerMinute, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readExerciseData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<ExerciseData> {
+    private suspend fun readExerciseData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<ExerciseData> {
         return readFiltered(HealthDataType.EXERCISE, ExerciseSessionRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { ExerciseData(it.exerciseType.toString(), it.startTime, it.endTime, Duration.between(it.startTime, it.endTime), it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readHydrationData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<HydrationData> {
+    private suspend fun readHydrationData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<HydrationData> {
         return readFiltered(HealthDataType.HYDRATION, HydrationRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { HydrationData(it.volume.inLiters, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readNutritionData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<NutritionData> {
+    private suspend fun readNutritionData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<NutritionData> {
         return readFiltered(HealthDataType.NUTRITION, NutritionRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { it.toNutritionData() }
     }
 
-    private suspend fun readMindfulnessData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<MindfulnessData> {
+    private suspend fun readMindfulnessData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<MindfulnessData> {
         return try {
             val availabilityStatus = healthConnectClient.features.getFeatureStatus(
                 HealthConnectFeatures.FEATURE_MINDFULNESS_SESSION
@@ -653,27 +657,27 @@ class HealthConnectManager(
         }
     }
 
-    private suspend fun readBodyFatData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BodyFatData> {
+    private suspend fun readBodyFatData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BodyFatData> {
         return readFiltered(HealthDataType.BODY_FAT, BodyFatRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BodyFatData(it.percentage.value, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readLeanBodyMassData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<LeanBodyMassData> {
+    private suspend fun readLeanBodyMassData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<LeanBodyMassData> {
         return readFiltered(HealthDataType.LEAN_BODY_MASS, LeanBodyMassRecord::class, startTime, endTime, lastSync) { it.time }
             .map { LeanBodyMassData(it.mass.inKilograms, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readBoneMassData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BoneMassData> {
+    private suspend fun readBoneMassData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BoneMassData> {
         return readFiltered(HealthDataType.BONE_MASS, BoneMassRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BoneMassData(it.mass.inKilograms, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readBodyWaterMassData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BodyWaterMassData> {
+    private suspend fun readBodyWaterMassData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BodyWaterMassData> {
         return readFiltered(HealthDataType.BODY_WATER_MASS, BodyWaterMassRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BodyWaterMassData(it.mass.inKilograms, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readHrvData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<HrvData> {
+    private suspend fun readHrvData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<HrvData> {
         return try {
             readFiltered(HealthDataType.HEART_RATE_VARIABILITY, HeartRateVariabilityRmssdRecord::class, startTime, endTime, lastSync) { it.time }
                 .map { HrvData(it.heartRateVariabilityMillis, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
@@ -917,12 +921,12 @@ class HealthConnectManager(
         return contract.createIntent(context, permissions.toTypedArray())
     }
 
-    private suspend fun readMenstruationPeriodData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<MenstruationPeriodData> {
+    private suspend fun readMenstruationPeriodData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<MenstruationPeriodData> {
         return readFiltered(HealthDataType.MENSTRUATION_PERIOD, MenstruationPeriodRecord::class, startTime, endTime, lastSync) { it.endTime }
             .map { MenstruationPeriodData(it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readMenstruationFlowData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<MenstruationFlowData> {
+    private suspend fun readMenstruationFlowData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<MenstruationFlowData> {
         return readFiltered(HealthDataType.MENSTRUATION_FLOW, MenstruationFlowRecord::class, startTime, endTime, lastSync) { it.time }
             .map { MenstruationFlowData(menstruationFlowToString(it.flow), it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
@@ -934,12 +938,12 @@ class HealthConnectManager(
         else -> "unknown"
     }
 
-    private suspend fun readBasalMetabolicRateData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BasalMetabolicRateData> {
+    private suspend fun readBasalMetabolicRateData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BasalMetabolicRateData> {
         return readFiltered(HealthDataType.BASAL_METABOLIC_RATE, BasalMetabolicRateRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BasalMetabolicRateData(it.basalMetabolicRate.inKilocaloriesPerDay, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readVo2MaxData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<Vo2MaxData> {
+    private suspend fun readVo2MaxData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<Vo2MaxData> {
         return readFiltered(HealthDataType.VO2_MAX, Vo2MaxRecord::class, startTime, endTime, lastSync) { it.time }
             .map { Vo2MaxData(it.vo2MillilitersPerMinuteKilogram, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
@@ -949,18 +953,19 @@ class HealthConnectManager(
      * like heart rate this filters and caps at RECORD granularity on modification time; samples
      * inherit the parent record's baseline and data origin.
      */
-    private suspend fun readSkinTemperatureData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<SkinTemperatureData> {
+    private suspend fun readSkinTemperatureData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<SkinTemperatureData> {
         try {
             val paged = readAllRecordsResilient(SkinTemperatureRecord::class, startTime, endTime)
             val rawSamples = paged.records.sumOf { it.deltas.size }
             val (own, newRecords) = ownRecordsPartition(
-                paged.records.filter { lastSync == null || it.metadata.lastModifiedTime > lastSync }
+                paged.records.filter { lastSync == null || lastSync.admits(it.metadata.lastModifiedTime, it.metadata.id) }
             )
             val includedRecords = ResilientReadLogic.capRecordsBySamples(
                 newRecords,
                 HealthDataType.SKIN_TEMPERATURE.maxRecordsPerSync,
                 samplesOf = { it.deltas.size },
-                timeOf = { it.metadata.lastModifiedTime }
+                timeOf = { it.metadata.lastModifiedTime },
+                idOf = { it.metadata.id }
             )
             val capped = includedRecords.size < newRecords.size
             if (capped) cappedTypes += HealthDataType.SKIN_TEMPERATURE
@@ -988,27 +993,27 @@ class HealthConnectManager(
         }
     }
 
-    private suspend fun readBasalBodyTemperatureData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<BasalBodyTemperatureData> {
+    private suspend fun readBasalBodyTemperatureData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<BasalBodyTemperatureData> {
         return readFiltered(HealthDataType.BASAL_BODY_TEMPERATURE, BasalBodyTemperatureRecord::class, startTime, endTime, lastSync) { it.time }
             .map { BasalBodyTemperatureData(it.temperature.inCelsius, it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readIntermenstrualBleedingData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<IntermenstrualBleedingData> {
+    private suspend fun readIntermenstrualBleedingData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<IntermenstrualBleedingData> {
         return readFiltered(HealthDataType.INTERMENSTRUAL_BLEEDING, IntermenstrualBleedingRecord::class, startTime, endTime, lastSync) { it.time }
             .map { IntermenstrualBleedingData(it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readOvulationTestData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<OvulationTestData> {
+    private suspend fun readOvulationTestData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<OvulationTestData> {
         return readFiltered(HealthDataType.OVULATION_TEST, OvulationTestRecord::class, startTime, endTime, lastSync) { it.time }
             .map { OvulationTestData(ovulationTestResultToString(it.result), it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readCervicalMucusData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<CervicalMucusData> {
+    private suspend fun readCervicalMucusData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<CervicalMucusData> {
         return readFiltered(HealthDataType.CERVICAL_MUCUS, CervicalMucusRecord::class, startTime, endTime, lastSync) { it.time }
             .map { CervicalMucusData(cervicalMucusAppearanceToString(it.appearance), cervicalMucusSensationToString(it.sensation), it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
-    private suspend fun readSexualActivityData(startTime: Instant, endTime: Instant, lastSync: Instant?): List<SexualActivityData> {
+    private suspend fun readSexualActivityData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<SexualActivityData> {
         return readFiltered(HealthDataType.SEXUAL_ACTIVITY, SexualActivityRecord::class, startTime, endTime, lastSync) { it.time }
             .map { SexualActivityData(sexualActivityProtectionToString(it.protectionUsed), it.time, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }

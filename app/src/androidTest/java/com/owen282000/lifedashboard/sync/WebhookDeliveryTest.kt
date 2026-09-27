@@ -37,7 +37,6 @@ import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -317,7 +316,6 @@ class WebhookDeliveryTest {
      * depending on where the millisecond ticked). A watch that
      * uploads a large backlog in one insert makes one unbounded payload.
      */
-    @Ignore("F7: fixed in phase 3")
     @Test
     fun backlogPostsStayUnderTheCap() = runBlocking {
         TestSetup.health(receiver, setOf(HEART_RATE))

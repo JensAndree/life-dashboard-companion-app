@@ -11,47 +11,65 @@ data class PagedResult<T>(
 )
 
 /**
+ * How far a sync has read one type, in the order of modification time and then record id: the
+ * modification time of the last record it handled and, when the cap stopped inside a group of
+ * records sharing that time, the id of the last one it took.
+ *
+ * Health Connect gives every record of one insert the same lastModifiedTime, so a watch that
+ * uploads a backlog in one go writes thousands of records with a single time. A watermark of
+ * time alone cannot stop inside such a group, so the cap had to take all of it and one payload
+ * grew without bound, which is what #38 crashed on (F7 of P2-4). With the id it stops anywhere.
+ *
+ * [tieId] null means every record at [time] was handled. That is also what a watermark stored
+ * before the id existed means, so those carry on unchanged.
+ */
+data class Watermark(val time: Instant, val tieId: String? = null) {
+    /** Whether a record with this modification time and id comes after this mark, so is still to be read. */
+    fun admits(modified: Instant, id: String): Boolean =
+        modified > time || (modified == time && tieId != null && id > tieId)
+}
+
+/**
  * Pure sync/read logic, kept free of Health Connect types so it can be unit tested on the JVM.
  */
 object ResilientReadLogic {
 
     val MIN_BISECT_WINDOW: Duration = Duration.ofMinutes(5)
 
+    /** The order the cap and the [Watermark] share: modification time, then record id. */
+    private fun <T> readOrder(timeOf: (T) -> Instant, idOf: (T) -> String): Comparator<T> =
+        compareBy<T>({ timeOf(it) }, { idOf(it) })
+
     /**
-     * Caps [records] to [maxLimit], keeping the OLDEST records, then extends the batch with
-     * every record sharing the boundary timestamp. This guarantees that every dropped record is
-     * strictly newer than every kept one, so advancing lastSync to the kept batch's maximum
-     * timestamp and filtering with a strict '>' never skips a dropped record (issue #38: without
-     * the tie extension, records sharing the boundary lastModifiedTime that fell just past the
-     * cap were above the cap but not above the watermark, and were skipped forever).
+     * Caps [records] to exactly [maxLimit], keeping the first in [readOrder]: the oldest by
+     * modification time, and by id among records sharing one. Every record left out comes
+     * after every record kept in that order, so the [Watermark] of the kept batch never skips
+     * one (issue #38). Before the id was part of the order, the batch had to take every
+     * record sharing the boundary time and could not be bounded (F7 of P2-4).
      */
-    fun <T> capOldestFirst(records: List<T>, maxLimit: Int, timeOf: (T) -> Instant): List<T> {
+    fun <T> capOldestFirst(records: List<T>, maxLimit: Int, timeOf: (T) -> Instant, idOf: (T) -> String): List<T> {
         if (records.size <= maxLimit) return records
-        val sorted = records.sortedBy(timeOf)
-        val boundary = timeOf(sorted[maxLimit - 1])
-        var end = maxLimit
-        while (end < sorted.size && timeOf(sorted[end]) == boundary) end++
-        return sorted.take(end)
+        return records.sortedWith(readOrder(timeOf, idOf)).take(maxLimit)
     }
 
     /**
-     * Caps sample-carrying records (heart rate, skin temperature) oldest-first at RECORD
+     * Caps sample-carrying records (heart rate, skin temperature) in [readOrder] at RECORD
      * granularity: whole records are included until the running sample count reaches
-     * [maxSamples], then the batch is extended with every record sharing the boundary
-     * timestamp. A record is either fully delivered or fully deferred, and the same
-     * strict-'>' watermark guarantee as [capOldestFirst] holds.
+     * [maxSamples]. A record is either fully delivered or fully deferred, so a batch can
+     * exceed [maxSamples] by at most one record's samples, and the same [Watermark] guarantee
+     * as [capOldestFirst] holds.
      */
     fun <T> capRecordsBySamples(
         records: List<T>,
         maxSamples: Int,
         samplesOf: (T) -> Int,
-        timeOf: (T) -> Instant
+        timeOf: (T) -> Instant,
+        idOf: (T) -> String
     ): List<T> {
-        val sorted = records.sortedBy(timeOf)
         val included = mutableListOf<T>()
         var sampleCount = 0
-        for (record in sorted) {
-            if (sampleCount >= maxSamples && timeOf(record) != timeOf(included.last())) break
+        for (record in records.sortedWith(readOrder(timeOf, idOf))) {
+            if (sampleCount >= maxSamples) break
             included += record
             sampleCount += samplesOf(record)
         }
@@ -77,20 +95,34 @@ object ResilientReadLogic {
         dataOrigin == ownPackage && !clientRecordId.isNullOrEmpty()
 
     /**
-     * The watermark to store after a read: the newest modification time of the delivered
-     * batch, and of the skipped own records too when the type was not capped. A skipped own
+     * The watermark to store after a read.
+     *
+     * Not capped: the newest modification time of the delivered batch and of the skipped own
+     * records, with no id, since every record up to and at that time was handled. A skipped own
      * record would otherwise stay above the watermark and be read and counted again on every
-     * sync for the whole lookback window; and when nothing was held back by the cap, every
-     * foreign record older than the newest own one has been delivered, so advancing past it
-     * skips nothing. When the type was capped the own records are ignored: a foreign record
-     * held back by the cap could sit between the delivered batch and the newest own record,
-     * and moving past it would lose it. Null when there is nothing to advance to.
+     * sync for the whole lookback window.
+     *
+     * Capped: the last delivered record in [readOrder], time and id, so the next read starts
+     * right after it, inside a group sharing its time if the cap stopped there. The own records
+     * are ignored: a foreign record held back by the cap could sit between the delivered batch
+     * and the newest own record, and moving past it would lose it.
+     *
+     * Null when there is nothing to advance to.
      */
-    fun <T> watermarkAfter(delivered: List<T>, own: List<T>, capped: Boolean, timeOf: (T) -> Instant): Instant? =
-        listOfNotNull(
-            delivered.maxOfOrNull(timeOf),
-            if (capped) null else own.maxOfOrNull(timeOf)
-        ).maxOrNull()
+    fun <T> watermarkAfter(
+        delivered: List<T>,
+        own: List<T>,
+        capped: Boolean,
+        timeOf: (T) -> Instant,
+        idOf: (T) -> String
+    ): Watermark? {
+        if (capped) {
+            val last = delivered.maxWithOrNull(readOrder(timeOf, idOf)) ?: return null
+            return Watermark(timeOf(last), idOf(last))
+        }
+        val newest = (delivered + own).maxOfOrNull(timeOf) ?: return null
+        return Watermark(newest)
+    }
 
     /**
      * Reads a window via [read], falling back to recursive bisection when the reader throws

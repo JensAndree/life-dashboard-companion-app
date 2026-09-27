@@ -127,11 +127,11 @@ class ResilientReadLogicTest {
         assertEquals(listOf(ownRecord), own)
         assertTrue(foreign.isEmpty())
 
-        val next = ResilientReadLogic.watermarkAfter(foreign, own, capped = false) { it.modified }
-        assertEquals(ownRecord.modified, next)
+        val next = ResilientReadLogic.watermarkAfter(foreign, own, capped = false, timeOf = { it.modified }, idOf = { it.id })
+        assertEquals(Watermark(ownRecord.modified), next)
         assertTrue(
             "after the watermark is stored the own record is not new any more",
-            listOf(ownRecord).none { it.modified > next!! }
+            listOf(ownRecord).none { next!!.admits(it.modified, it.id) }
         )
     }
 
@@ -139,9 +139,11 @@ class ResilientReadLogicTest {
     fun `the watermark takes the newer of the delivered batch and the own records`() {
         val delivered = listOf(Stamped("watch", base.plus(Duration.ofHours(1)), own = false))
         val own = listOf(Stamped("ha", base.plus(Duration.ofHours(3)), own = true))
-        assertEquals(base.plus(Duration.ofHours(3)), ResilientReadLogic.watermarkAfter(delivered, own, capped = false) { it.modified })
-        assertEquals(base.plus(Duration.ofHours(1)), ResilientReadLogic.watermarkAfter(delivered, emptyList(), capped = false) { it.modified })
-        assertEquals(null, ResilientReadLogic.watermarkAfter(emptyList<Stamped>(), emptyList(), capped = false) { it.modified })
+        fun after(delivered: List<Stamped>, own: List<Stamped>) =
+            ResilientReadLogic.watermarkAfter(delivered, own, capped = false, timeOf = { it.modified }, idOf = { it.id })
+        assertEquals(Watermark(base.plus(Duration.ofHours(3))), after(delivered, own))
+        assertEquals(Watermark(base.plus(Duration.ofHours(1))), after(delivered, emptyList()))
+        assertEquals(null, after(emptyList(), emptyList()))
     }
 
     @Test
@@ -151,9 +153,9 @@ class ResilientReadLogicTest {
         val delivered = listOf(Stamped("watch-1", base.plus(Duration.ofHours(1)), own = false))
         val own = listOf(Stamped("ha", base.plus(Duration.ofHours(3)), own = true))
         val heldBack = Stamped("watch-2", base.plus(Duration.ofHours(4)), own = false)
-        val next = ResilientReadLogic.watermarkAfter(delivered, own, capped = true) { it.modified }
-        assertEquals(base.plus(Duration.ofHours(1)), next)
-        assertTrue(heldBack.modified > next!!)
+        val next = ResilientReadLogic.watermarkAfter(delivered, own, capped = true, timeOf = { it.modified }, idOf = { it.id })
+        assertEquals(Watermark(base.plus(Duration.ofHours(1)), "watch-1"), next)
+        assertTrue(next!!.admits(heldBack.modified, heldBack.id))
     }
 
     @Test

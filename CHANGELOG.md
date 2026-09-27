@@ -34,6 +34,11 @@ All notable changes to this project are documented in this file. The format is b
 - Importing a settings file exported without secrets emptied the MQTT broker's username and
   password, although such an import promises to keep the credentials on the device. They are
   now kept, for a broker on the same host.
+- A watch that uploaded a large backlog in one go could still produce one oversized payload,
+  the situation the crash in #38 came from. Health Connect gives every record of one upload
+  the same modification time, and the limit per sync could not stop inside such a group. The
+  sync now also remembers the last record it sent, so every payload stays within the limit
+  and the rest follows in the next pass. Nothing is sent twice or skipped across the update.
 
 ## [1.20.0] - 2026-09-26
 

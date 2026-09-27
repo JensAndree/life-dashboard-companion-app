@@ -46,9 +46,7 @@ class HealthSyncManager(
                 return@withContext Result.failure(Exception("No data types enabled"))
             }
 
-            val lastSyncTimestamps = enabledTypes.associateWith { type ->
-                preferencesManager.getHealthLastSyncTimestamp(type)?.let { Instant.ofEpochMilli(it) }
-            }
+            val lastSyncTimestamps = enabledTypes.associateWith { type -> preferencesManager.getHealthWatermark(type) }
 
             val healthDataResult = healthConnectManager.readHealthData(enabledTypes, lastSyncTimestamps)
             if (healthDataResult.isFailure) {
@@ -157,9 +155,7 @@ class HealthSyncManager(
 
             for (pass in 1..MAX_SYNC_PASSES) {
                 // Re-read watermarks each pass; the previous pass advanced them.
-                val lastSyncTimestamps = enabledTypes.associateWith { type ->
-                    preferencesManager.getHealthLastSyncTimestamp(type)?.let { Instant.ofEpochMilli(it) }
-                }
+                val lastSyncTimestamps = enabledTypes.associateWith { type -> preferencesManager.getHealthWatermark(type) }
 
                 val healthDataResult = healthConnectManager.readHealthData(enabledTypes, lastSyncTimestamps)
                 if (healthDataResult.isFailure) {
@@ -479,9 +475,9 @@ class HealthSyncManager(
 
             // Exhaust the window before advancing (issue #39): one capped read per window
             // silently dropped everything past the cap for dense types. The cursor is a local
-            // per-type lastModifiedTime watermark; the tie-inclusive cap makes its strict '>'
-            // filter safe, so repeated reads walk the window chunk by chunk.
-            var cursor: Map<HealthDataType, Instant?> = enabledTypes.associateWith { null }
+            // per-type Watermark, so repeated reads walk the window chunk by chunk, also
+            // through thousands of records that share one modification time.
+            var cursor: Map<HealthDataType, Watermark?> = enabledTypes.associateWith { null }
             // The window's days as Health Connect counts them, whole days from local midnight
             // to midnight, so a receiver gets each day's real total and not the sum of the raw
             // records, which double counts a phone and a watch. A day cut by a window bound is
@@ -659,7 +655,7 @@ class HealthSyncManager(
         // backfills and edits (old record timestamps, recent modification) are caught by the
         // next sync instead of being skipped forever.
         data.watermarks.forEach { (type, watermark) ->
-            preferencesManager.setHealthLastSyncTimestamp(type, watermark.toEpochMilli())
+            preferencesManager.setHealthWatermark(type, watermark)
         }
 
         if (data.steps.isNotEmpty()) {
