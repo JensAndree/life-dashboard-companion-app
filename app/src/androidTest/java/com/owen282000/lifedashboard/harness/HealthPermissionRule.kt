@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -14,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.rules.TestRule
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
+import java.time.Instant
 import java.util.regex.Pattern
 
 /**
@@ -72,8 +75,34 @@ class HealthPermissionRule : TestRule {
             }
             val stillMissing = wanted - grantedNow(context)
             check(stillMissing.isEmpty()) { "Health Connect permissions still missing after the $route route: $stillMissing" }
+            proveWriteAccess(context)
             Log.i(TAG, "Health Connect permissions granted via $route (${wanted.size} permissions)")
             granted = true
+        }
+
+        /**
+         * A write, to be sure the grants hold. On a fresh emulator Health Connect can refuse the
+         * first writes after the very first grant ("Caller doesn't have WRITE_STEPS"), although
+         * every permission reads as granted; the first CI runs on main hit it in whichever test
+         * wrote first. Revoking one permission and granting it again settles it, so that is done
+         * before the tests run instead of failing one of them. The probe deletes nothing: it asks
+         * for the app's steps in the first millisecond of 1970.
+         */
+        private fun proveWriteAccess(context: Context) {
+            val steps = "android.permission.health.WRITE_STEPS"
+            val client = HealthConnectClient.getOrCreate(context)
+            val nothing = TimeRangeFilter.between(Instant.EPOCH, Instant.EPOCH.plusMillis(1))
+            for (attempt in 1..3) {
+                val refused = runCatching { runBlocking { client.deleteRecords(StepsRecord::class, nothing) } }
+                    .exceptionOrNull() as? SecurityException ?: return
+                Log.w(TAG, "Health Connect refused a write after the grant (attempt $attempt), granting again", refused)
+                val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+                automation.executeShellCommand("pm revoke ${context.packageName} $steps").close()
+                Thread.sleep(500)
+                grantViaShellIdentity(context, setOf(steps))
+                Thread.sleep(500)
+            }
+            error("Health Connect keeps refusing writes although the permissions are granted")
         }
 
         /** Every android.permission.health.* the installed app requests, so the list follows the manifest. */
