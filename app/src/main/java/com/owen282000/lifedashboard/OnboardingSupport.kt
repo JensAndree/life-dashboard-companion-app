@@ -44,4 +44,42 @@ object OnboardingSupport {
         TypePreset.ESSENTIALS -> ESSENTIAL_TYPES
         TypePreset.LATER -> emptySet()
     }
+
+    /**
+     * Whether finishing the wizard writes its webhook into the sections. Not when it is
+     * exactly what a scanned code already stored: pairing wrote it into the sections picked
+     * in its dialog, and writing it again here would add the ones left out there.
+     */
+    fun writesWebhook(useWebhook: Boolean, url: String, secret: String, paired: PairingLink?): Boolean {
+        if (!useWebhook || url.isBlank()) return false
+        return paired == null || !isPaired(url, secret, paired)
+    }
+
+    /**
+     * A code paired while the wizard is open, with the sections its dialog wrote. [seq] makes
+     * pairing the same code again a new event, so the wizard takes it over a second time.
+     */
+    data class WizardPairing(val link: PairingLink, val written: Set<PairingSource>, val seq: Int)
+
+    /**
+     * Which sections the webhook card's address ends up in. The scanned address went only
+     * where the pairing dialog wrote it, which is not always what the wizard's own choices say;
+     * an address typed or edited here goes to the sources picked in the wizard.
+     */
+    fun webhookSections(
+        healthConnect: Boolean,
+        screenTime: Boolean,
+        url: String,
+        secret: String,
+        pairing: WizardPairing?
+    ): Set<PairingSource> {
+        if (pairing != null && isPaired(url, secret, pairing.link)) return pairing.written
+        return buildSet {
+            if (healthConnect) add(PairingSource.HEALTH)
+            if (screenTime) add(PairingSource.SCREEN_TIME)
+        }
+    }
+
+    private fun isPaired(url: String, secret: String, paired: PairingLink): Boolean =
+        url == paired.url && secret == paired.secret
 }

@@ -310,9 +310,17 @@ Two limits are worth building around:
 "deletions_unavailable": ["nutrition", "hydration"]
 ```
 
+The same change feed shows records that a source wrote or edited long after their own timestamp: a watch that was away from the phone for more than a week uploads its readings with their original times. Those that fall before the query window (see `read_from` below) are not in the payload, and they are named per payload key in `records_outside_window`, with how many there were and the timestamp range they fall in. A backfill of that range sends them. Like deletions, the field is absent when there are none and rides along on the next payload that goes out, or on one of its own.
+
+```json
+"records_outside_window": {
+  "heart_rate": { "count": 412, "from": "2026-09-14T06:02:11Z", "until": "2026-09-20T12:00:03.114Z" }
+}
+```
+
 A backfill window is the fallback, and says so explicitly. Every payload of a backfill carries `backfill`, `window_start` and `window_end`; the last payload of a window also carries `window_complete: true`, which means every record the phone holds for that window has now been sent. At that point a receiver may treat any `uuid` it holds inside the window that was not in the window as deleted. A window that was split into several payloads carries `window_complete: false` on all but the last, and a window that holds nothing still sends one payload with `window_complete: true`, which is what distinguishes an empty window from an unreported one.
 
-Every Health Connect payload also carries `sequence`, a counter that only goes up for a given install. The app drains its outbox before each sync, so payloads normally arrive in order, but a receiver behind several webhook URLs, a proxy or a retrying load balancer can still see an older one land after a newer one. Recording the highest sequence applied per install lets a receiver ignore the late one instead of letting it restore a record that was deleted since. Screen Time payloads carry no sequence, so treat the field as absent rather than zero.
+Every Health Connect payload also carries `sequence`, a counter that only goes up for a given install. The app drains its outbox before each sync, so payloads normally arrive in order, but a receiver behind several webhook URLs, a proxy or a retrying load balancer can still see an older one land after a newer one. Recording the highest sequence applied per install and `source` lets a receiver ignore the late one instead of letting it restore a record that was deleted since. Screen Time payloads take their number from the same counter (1.20.0 and older send none), so per source the numbers only go up but can skip, and one highest number per install would wrongly ignore a Screen Time week that waited in the outbox while a Health Connect payload went ahead of it. Screen Time is compared per date rather than per payload, see [Screen Time payload](#screen-time-payload). The field is optional, also in the iOS app's payloads, so treat a missing one as unknown rather than zero.
 
 A deletion is often the only thing that changed, for instance when a meal is removed and nothing is added. Such a sync sends a payload with `deleted_records` and no record arrays at all, which is why a payload with no data is not necessarily an empty one.
 
@@ -366,12 +374,15 @@ Every payload ends with a `_diagnostics` object with one entry per enabled type,
     "min_time": null,
     "max_time": null,
     "last_sync": "2026-09-12T05:44:06.439Z",
-    "error": null
+    "error": null,
+    "own_records_skipped": 0,
+    "read_from": "2026-09-05T05:29:02.112Z",
+    "lookback_gap_from": null
   }
 }
 ```
 
-`raw_*` describes everything Health Connect returned for the query window; `filtered_record_count` and `min_time`/`max_time` describe what this payload delivered. When `raw_latest_modified_time` is older than `last_sync`, the source app has not written anything new yet. An `error` of "Health Connect did not return ... within 10 s" or "skipped: the read step used its budget" means Health Connect did not answer in time; that type keeps its place and the next sync reads it. See [DATA_SOURCES.md](DATA_SOURCES.md) for what individual source apps do and do not write.
+`raw_*` describes everything Health Connect returned for the query window; `filtered_record_count` and `min_time`/`max_time` describe what this payload delivered. When `raw_latest_modified_time` is older than `last_sync`, the source app has not written anything new yet. An `error` of "Health Connect did not return ... within 10 s" or "skipped: the read step used its budget" means Health Connect did not answer in time; that type keeps its place and the next sync reads it. `read_from` is where the query window started: a week before the last sync that read the whole type, so a phone that was off or asleep for a while still picks up what a watch wrote before the pause, reaching back 30 days at most. When a pause was longer than that, `lookback_gap_from` says from where: records timestamped between it and `read_from` that were written or edited during the pause were not read, and a backfill of that range sends them. A sync that sends nothing keeps the gap for the next payload, so it is named at least once. It is null otherwise. See [DATA_SOURCES.md](DATA_SOURCES.md) for what individual source apps do and do not write.
 
 ## Screen Time payload
 
@@ -381,6 +392,7 @@ Every payload ends with a `_diagnostics` object with one entry per enabled type,
   "app_version": "1.2.0",
   "device": "Google Pixel 8",
   "source": "screen_time",
+  "sequence": 42,
   "screen_time": [
     {
       "date": "2025-02-05",
@@ -398,7 +410,7 @@ Every payload ends with a `_diagnostics` object with one entry per enabled type,
 }
 ```
 
-Minutes are foreground time per app, derived from Android's activity resume, pause and stop events; background time is not counted. A session also ends on screen off, keyguard and shutdown, System UI and the launcher are excluded, and apps with under one minute per day are omitted, so totals are comparable to Digital Wellbeing (with a custom day boundary they will not match its midnight day exactly). Every sync recomputes and re-sends the last 7 days from the device's event log, so store per date and let the newest payload win.
+Minutes are foreground time per app, derived from Android's activity resume, pause and stop events; background time is not counted. A session also ends on screen off, keyguard and shutdown, System UI and the launcher are excluded, and apps with under one minute per day are omitted, so totals are comparable to Digital Wellbeing (with a custom day boundary they will not match its midnight day exactly). Every sync recomputes and re-sends the last 7 days from the device's event log, so store per date and let the newest payload win for that date. The newest week that failed waits in the outbox and can arrive after a newer one, so the newest is the one with the highest `sequence`, not the one that arrived last (see [Deletions](#deletions) for the counter): store with each date the `sequence` of the payload that wrote it, and apply a day only from a payload with a higher one. Do not ignore a late week as a whole: its oldest date may be one that no newer week covers any more.
 
 ## Delivery, retries and signing
 
@@ -406,7 +418,11 @@ Every configured webhook URL receives each payload. A sync counts as delivered w
 
 Failed posts are retried up to 3 times with exponential backoff (1s, 2s), but only for transient failures: network errors, timeouts, HTTP 408, 429, and 5xx. Permanent client errors (401, 404, ...) fail immediately without retrying. The logs distinguish "recovered after retry" from "failed after all attempts".
 
+Redirects are followed only on the same host: the same port, or `http` on port 80 moving up to `https` on 443, at most 5 in a row. The app sends the same POST there, with the same body, signature and headers, and the log notes the new address so you can enter it and skip the extra request. A redirect to another host, from `https` down to `http`, or to plain `http` without "Allow plain HTTP webhooks" is not followed: it would send the body, the signature and your custom headers to an address you did not enter, past the checks made on the one you did. Such a 3xx counts as a failed delivery, and the log names the host it pointed at: enter that final address as the webhook URL instead.
+
 A payload that failed is kept in an outbox on the phone and sent again, oldest first, at the start of the next sync, with the settings the app has by then. The drain stops at the first payload that fails again, so the order holds while a receiver is down or misconfigured. One kind of refusal is skipped instead: HTTP 400, 413 and 422 say the receiver refuses this payload rather than every payload, so the payloads queued after it are sent anyway and may arrive before it (use `sequence` to order them). A skipped payload stays queued, in case the refusal came from a bug on the receiving side that an update fixes, and is dropped with a log row after a week.
+
+The outbox holds up to 700 Health Connect payloads, a week of 15-minute syncs; beyond that the oldest is dropped, with a log row and a notification. Screen Time keeps only its newest failed week, which replaces the one queued before it, so expect gaps in its `sequence`; after more than a week without a delivery, days that fall out of that week are lost, again with a log row and a notification. One sync drains for at most 2 minutes and leaves the rest to the next.
 
 When an HMAC signing secret is configured (under Webhook Headers in the app), every POST includes:
 

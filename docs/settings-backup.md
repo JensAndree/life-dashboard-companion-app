@@ -11,7 +11,7 @@ Webhook auth headers, HMAC signing secrets and MQTT passwords are stored encrypt
 | Included | Not included |
 |---|---|
 | Webhook URLs, per-section | Sync watermarks (last-sync timestamps), client certificate choice |
-| Custom headers | Webhook logs and raw payloads |
+| Custom headers, and which URLs get none (the ones QR pairing added) | Webhook logs and raw payloads |
 | HMAC signing secrets | Lifetime statistics |
 | Sync intervals | Health Connect permissions |
 | MQTT brokers, topics and switches | Usage access permission |
@@ -35,7 +35,7 @@ Permissions are granted by Android, not by the app, so you still grant Health Co
 
 **With secrets** the file is encrypted with AES-256-GCM under a key derived from your password (PBKDF2-HMAC-SHA256, 210,000 iterations). It is saved as `life-dashboard-config.encrypted.json`. There is no recovery if you lose the password: without it the file cannot be decrypted.
 
-**Without secrets** the file is plain JSON (`life-dashboard-config.json`) holding URLs, MQTT hosts, topics and options but no credentials. This is the one to share when you want to hand someone your setup without handing over access to your endpoints.
+**Without secrets** the file is plain JSON (`life-dashboard-config.json`) holding URLs, MQTT hosts, topics and options, but no passwords, headers or HMAC secrets. It still contains your webhook URLs, and a URL can be a credential in itself: a Home Assistant `/api/webhook/<id>` address accepts anything posted to it. Share the file only with someone you would give that access to.
 
 ## Importing
 
@@ -46,6 +46,8 @@ Permissions are granted by Android, not by the app, so you still grant Health Co
 5. Confirm
 
 An import replaces your current configuration, so the preview shows the webhook counts, data types and broker count first. A file without secrets keeps the credentials already on the device rather than clearing them, so you can import a shared setup and fill in your own tokens. A broker keeps its username and password only when the file points at the same broker, meaning the same host, port and TLS setting; otherwise they are left empty, so they never go to a server they were not set for, or out in plain text where they had TLS.
+
+Custom headers follow the same rule. A file with headers restores them together with its own list of URLs that get none. A file without them keeps the headers on the device, and those go only to the URLs they went to before the import: a URL that is new to the device, or one that QR pairing added there, gets none of them.
 
 Reopen the app after importing so every screen reads the new values.
 
@@ -59,10 +61,11 @@ Plain exports are readable JSON:
   "exported_at": "2026-09-13T12:00:00Z",
   "app_version": "1.12.0",
   "health": {
-    "webhook_urls": ["https://example.com/health"],
+    "webhook_urls": ["https://example.com/health", "https://ha.example.com/api/webhook/abc"],
     "headers": {},
     "signing_secret": null,
-    "sync_interval_minutes": 60
+    "sync_interval_minutes": 60,
+    "urls_without_headers": ["https://ha.example.com/api/webhook/abc"]
   },
   "screen_time": { "webhook_urls": [], "headers": {}, "sync_interval_minutes": 60 },
   "mqtt": {
@@ -82,6 +85,8 @@ Plain exports are readable JSON:
   }
 }
 ```
+
+`urls_without_headers` lists the webhook URLs of that section that QR pairing added, which get none of its custom headers. A backup written before this list existed has none, and imports as it always did: the app sent the headers to every URL then.
 
 `receive_source_url` is only applied when it is one of the health webhook URLs in the same file. A backup written before 1.20.0 has none of the `phone_name` and `receive_*` keys, and importing it leaves the phone name, the Receive switches and the ledger as they are.
 

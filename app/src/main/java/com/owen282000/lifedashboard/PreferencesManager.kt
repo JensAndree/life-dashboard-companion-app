@@ -184,6 +184,9 @@ class PreferencesManager(context: Context) {
         // Health Connect keys
         private const val KEY_HEALTH_LAST_SYNC_TS_PREFIX = "health_last_sync_ts_"
         private const val KEY_HEALTH_LAST_SYNC_TIE_PREFIX = "health_last_sync_tie_"
+
+        /** Per type, the last moment a sync read all of it, see [LookbackWindow]. */
+        private const val KEY_HEALTH_COVERED_UNTIL_PREFIX = "health_covered_until_"
         private const val KEY_HEALTH_SYNC_INTERVAL_MINUTES = "health_sync_interval_minutes"
 
         /**
@@ -226,6 +229,10 @@ class PreferencesManager(context: Context) {
         private const val KEY_SCREENTIME_WEBHOOK_HEADERS = "screentime_webhook_headers"
         private const val KEY_HEALTH_WEBHOOK_SECRET = "health_webhook_secret"
         private const val KEY_SCREENTIME_WEBHOOK_SECRET = "screentime_webhook_secret"
+
+        // URLs that get no custom headers (the ones QR pairing added); not secret themselves
+        private const val KEY_HEALTH_URLS_WITHOUT_HEADERS = "health_webhook_urls_without_headers"
+        private const val KEY_SCREENTIME_URLS_WITHOUT_HEADERS = "screentime_webhook_urls_without_headers"
 
         // Shared keys
         private const val KEY_KEEP_FULL_PAYLOADS = "keep_full_payloads"
@@ -351,6 +358,16 @@ class PreferencesManager(context: Context) {
         }.apply()
     }
 
+    /** The last moment a sync read all of [type], or null when none has yet, as after an update from an older version. */
+    fun getHealthCoveredUntil(type: HealthDataType): java.time.Instant? {
+        val ms = prefs.getLong(KEY_HEALTH_COVERED_UNTIL_PREFIX + type.name, -1)
+        return if (ms == -1L) null else java.time.Instant.ofEpochMilli(ms)
+    }
+
+    fun setHealthCoveredUntil(type: HealthDataType, until: java.time.Instant) {
+        prefs.edit().putLong(KEY_HEALTH_COVERED_UNTIL_PREFIX + type.name, until.toEpochMilli()).apply()
+    }
+
     /** The stored changes token for [type], or null when there is none yet. */
     fun getHealthChangesToken(type: HealthDataType): String? =
         prefs.getString(KEY_HEALTH_CHANGES_TOKEN_PREFIX + type.name, null)
@@ -380,6 +397,11 @@ class PreferencesManager(context: Context) {
     /**
      * The next payload sequence number, incremented on every call. A receiver that keeps the
      * highest sequence it has seen can ignore a retry that arrives after a newer payload.
+     *
+     * Screen Time payloads take their number here too, so it goes up across everything the
+     * install sends. Per source they still rise in the order the payloads were made, with gaps,
+     * so a receiver keeps its highest number per source: one per install would take a Screen
+     * Time week that the outbox held back behind a newer Health Connect payload for a stale one.
      *
      * A manual sync from the UI can run while a scheduled one is in flight, and each holds its
      * own PreferencesManager, so the read-modify-write is guarded by a lock on the class and
@@ -424,6 +446,24 @@ class PreferencesManager(context: Context) {
     fun setHealthWebhookHeaders(headers: Map<String, String>) {
         val headersJson = Json.encodeToString(headers)
         securePrefs.edit().putString(KEY_HEALTH_WEBHOOK_HEADERS, headersJson).apply()
+    }
+
+    /** Health URLs that get none of the custom headers, see [WebhookSupport.headersFor]. */
+    fun getHealthUrlsWithoutHeaders(): Set<String> = urlSet(KEY_HEALTH_URLS_WITHOUT_HEADERS)
+
+    fun setHealthUrlsWithoutHeaders(urls: Set<String>) = putUrlSet(KEY_HEALTH_URLS_WITHOUT_HEADERS, urls)
+
+    private fun urlSet(key: String): Set<String> {
+        val stored = prefs.getString(key, null) ?: return emptySet()
+        return runCatching { Json.decodeFromString<List<String>>(stored).toSet() }.getOrDefault(emptySet())
+    }
+
+    private fun putUrlSet(key: String, urls: Set<String>) {
+        if (urls.isEmpty()) {
+            prefs.edit().remove(key).apply()
+            return
+        }
+        prefs.edit().putString(key, Json.encodeToString(urls.toList())).apply()
     }
 
     /** Daily deduplicated totals in the payload (aggregate API merges phone + watch). */
@@ -644,6 +684,11 @@ class PreferencesManager(context: Context) {
         securePrefs.edit().putString(KEY_SCREENTIME_WEBHOOK_HEADERS, headersJson).apply()
     }
 
+    /** Screen Time URLs that get none of the custom headers, see [WebhookSupport.headersFor]. */
+    fun getScreenTimeUrlsWithoutHeaders(): Set<String> = urlSet(KEY_SCREENTIME_URLS_WITHOUT_HEADERS)
+
+    fun setScreenTimeUrlsWithoutHeaders(urls: Set<String>) = putUrlSet(KEY_SCREENTIME_URLS_WITHOUT_HEADERS, urls)
+
     fun getScreenTimeWebhookSecret(): String? {
         return securePrefs.getString(KEY_SCREENTIME_WEBHOOK_SECRET, null)?.takeIf { it.isNotBlank() }
     }
@@ -717,23 +762,25 @@ class PreferencesManager(context: Context) {
     // so the rules in PairingApply stay unit-testable without SharedPreferences.
 
     fun healthSectionWebhook(): SectionWebhook =
-        SectionWebhook(getHealthWebhookUrls(), getHealthWebhookSecret())
+        SectionWebhook(getHealthWebhookUrls(), getHealthWebhookSecret(), getHealthUrlsWithoutHeaders())
 
     fun screenTimeSectionWebhook(): SectionWebhook =
-        SectionWebhook(getScreenTimeWebhookUrls(), getScreenTimeWebhookSecret())
+        SectionWebhook(getScreenTimeWebhookUrls(), getScreenTimeWebhookSecret(), getScreenTimeUrlsWithoutHeaders())
 
     fun asPairingStore(): PairingStore = object : PairingStore {
         override fun health() = healthSectionWebhook()
         override fun screenTime() = screenTimeSectionWebhook()
 
-        override fun setHealth(urls: List<String>, secret: String) {
+        override fun setHealth(urls: List<String>, secret: String, urlsWithoutHeaders: Set<String>) {
             setHealthWebhookUrls(urls)
             setHealthWebhookSecret(secret)
+            setHealthUrlsWithoutHeaders(urlsWithoutHeaders)
         }
 
-        override fun setScreenTime(urls: List<String>, secret: String) {
+        override fun setScreenTime(urls: List<String>, secret: String, urlsWithoutHeaders: Set<String>) {
             setScreenTimeWebhookUrls(urls)
             setScreenTimeWebhookSecret(secret)
+            setScreenTimeUrlsWithoutHeaders(urlsWithoutHeaders)
         }
 
         override fun setAllowPlainHttp(enabled: Boolean) = setAllowHttpWebhooks(enabled)

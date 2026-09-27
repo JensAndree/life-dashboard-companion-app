@@ -1,12 +1,15 @@
 package com.owen282000.lifedashboard.viewmodel
 
+import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType
 import com.owen282000.lifedashboard.HealthSyncResult
 import com.owen282000.lifedashboard.ReceiveStatus
 import com.owen282000.lifedashboard.WriteBackType
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -93,6 +96,49 @@ class HealthConnectViewModelTest {
         assertEquals(listOf("https://example.org/hook"), settings.health.webhook.urls)
         assertEquals(8883, vm.state.value.saved.mqtt.sharedBroker.port)
         assertFalse(vm.state.value.hasChanges)
+    }
+
+    @Test
+    fun `a paired URL keeps going without headers until it is typed in by hand`() = runTest {
+        val paired = "https://paired.example/hook"
+        val settings = FakeAppSettings(
+            health = HealthDraft(
+                WebhookDraft(urls = listOf("https://mine/hook", paired), headers = mapOf("X-Api-Key" to "k"), urlsWithoutHeaders = setOf(paired)),
+                emptySet(),
+                emptyMqtt()
+            )
+        )
+        val vm = vm(settings)
+
+        // Adding a header is no reason to send it to the paired URL.
+        vm.addHeader("Authorization", "Bearer t")
+        assertEquals(setOf(paired), vm.state.value.draft.webhook.urlsWithoutHeaders)
+
+        // Removing it forgets the mark; typing it in again is the user's own choice.
+        vm.removeUrl(1)
+        assertTrue(vm.state.value.draft.webhook.urlsWithoutHeaders.isEmpty())
+        vm.addUrl(paired)
+        vm.save()
+        assertEquals(listOf("https://mine/hook", paired), settings.health.webhook.urls)
+        assertTrue(settings.health.webhook.urlsWithoutHeaders.isEmpty())
+    }
+
+    @Test
+    fun `typing a paired URL in again lifts its mark without listing it twice`() = runTest {
+        val paired = "https://paired.example/hook"
+        val settings = FakeAppSettings(
+            health = HealthDraft(
+                WebhookDraft(urls = listOf("https://mine/hook", paired), headers = mapOf("X-Api-Key" to "k"), urlsWithoutHeaders = setOf(paired)),
+                emptySet(),
+                emptyMqtt()
+            )
+        )
+        val vm = vm(settings)
+
+        vm.addUrl(paired)
+        vm.save()
+        assertEquals(listOf("https://mine/hook", paired), settings.health.webhook.urls)
+        assertTrue(settings.health.webhook.urlsWithoutHeaders.isEmpty())
     }
 
     @Test
@@ -187,6 +233,73 @@ class HealthConnectViewModelTest {
         vm.backfill(90)
         assertNull(vm.state.value.backfillProgress)
         assertEquals(UiMessage.BackfillComplete(90), vm.state.value.syncMessage)
+    }
+
+    @Test
+    fun `a backfill started during a sync says it waits, and sync now stays off while it runs`() = runTest {
+        val running = CompletableDeferred<Unit>()
+        val vm = vm(ops = FakeHealthOps().apply { runningSync = running })
+        vm.refreshPermissions()
+        vm.addUrl("https://example.org/hook")
+        assertTrue(vm.state.value.canSync)
+
+        vm.backfill(90)
+        assertTrue(vm.state.value.backfillWaiting)
+        assertFalse(vm.state.value.canSync)
+
+        running.complete(Unit)
+        assertFalse(vm.state.value.backfillWaiting)
+        assertNull(vm.state.value.backfillProgress)
+        assertEquals(UiMessage.BackfillComplete(90), vm.state.value.syncMessage)
+        assertTrue(vm.state.value.canSync)
+    }
+
+    @Test
+    fun `grant asks for the enabled types and background reading, not every type`() = runTest {
+        val settings = FakeAppSettings(health = HealthDraft(WebhookDraft(), setOf(HealthDataType.STEPS, HealthDataType.WEIGHT), emptyMqtt()))
+        val vm = vm(settings, FakeHealthOps(granted = emptySet()))
+        val request = async(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm.permissionRequests.first() }
+        vm.requestAccess()
+        assertEquals(
+            setOf("android.permission.health.READ_STEPS", "android.permission.health.READ_WEIGHT", HealthConnectManager.BACKGROUND_PERMISSION),
+            request.await()
+        )
+    }
+
+    @Test
+    fun `history access is asked for from the backfill dialog alone`() = runTest {
+        val settings = FakeAppSettings(health = HealthDraft(WebhookDraft(), setOf(HealthDataType.STEPS), emptyMqtt()))
+        val vm = vm(settings)
+        val request = async(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm.permissionRequests.first() }
+        vm.requestHistoryPermission()
+        assertEquals(setOf("android.permission.health.READ_STEPS", HealthConnectManager.HISTORY_PERMISSION), request.await())
+    }
+
+    @Test
+    fun `a type without its read permission asks for it and goes on once it is granted`() = runTest {
+        val ops = FakeHealthOps(granted = setOf("android.permission.health.READ_STEPS"))
+        val vm = vm(ops = ops)
+        vm.refreshPermissions()
+
+        vm.toggleType(HealthDataType.WEIGHT, true)
+        assertEquals(HealthDataType.WEIGHT, vm.state.value.permissionPrompt)
+        assertFalse(HealthDataType.WEIGHT in vm.state.value.draft.enabledTypes)
+
+        val request = async(dispatcher, start = CoroutineStart.UNDISPATCHED) { vm.permissionRequests.first() }
+        vm.requestTypePermission()
+        assertEquals(setOf("android.permission.health.READ_WEIGHT"), request.await())
+        assertNull(vm.state.value.permissionPrompt)
+
+        ops.granted = ops.granted + "android.permission.health.READ_WEIGHT"
+        vm.refreshPermissions()
+        assertTrue(HealthDataType.WEIGHT in vm.state.value.draft.enabledTypes)
+
+        // A type whose permission is already there goes on without asking.
+        vm.toggleType(HealthDataType.STEPS, false)
+        assertFalse(HealthDataType.STEPS in vm.state.value.draft.enabledTypes)
+        vm.toggleType(HealthDataType.STEPS, true)
+        assertNull(vm.state.value.permissionPrompt)
+        assertTrue(HealthDataType.STEPS in vm.state.value.draft.enabledTypes)
     }
 
     @Test

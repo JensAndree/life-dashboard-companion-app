@@ -7,8 +7,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType
+import com.owen282000.lifedashboard.HealthPermissionRequests
 import com.owen282000.lifedashboard.HealthSyncResult
 import com.owen282000.lifedashboard.MqttSection
 import com.owen282000.lifedashboard.ReceiveSettings
@@ -54,6 +54,8 @@ data class HealthUiState(
     val isPinging: Boolean = false,
     val isExporting: Boolean = false,
     val backfillProgress: Pair<Int, Int>? = null,
+    /** The backfill waits for a sync that is running; it starts by itself once that ends. */
+    val backfillWaiting: Boolean = false,
     /** The line under the sync actions; stays until the next action replaces it. */
     val syncMessage: UiMessage? = null,
     val previewData: String? = null,
@@ -77,10 +79,13 @@ data class HealthUiState(
      */
     val receiveAvailable: Boolean get() =
         saved.webhook.secret.isNotBlank() && WriteBackPayload.sourceUrlChoice(saved.webhook.urls) != SourceUrlChoice.None
-    val hasAnyPermission: Boolean get() = grantedPermissions.isNotEmpty()
 
-    /** A phone that only receives has nothing to read, but every sync is still the round trip that fetches measurements. */
-    val canSync: Boolean get() = !isSyncing && draft.hasDestination && (draft.enabledTypes.isNotEmpty() || receive.enabled)
+    /**
+     * A phone that only receives has nothing to read, but every sync is still the round trip that fetches measurements.
+     * A running backfill holds the sync lock, so a sync started then would only wait for it.
+     */
+    val canSync: Boolean get() =
+        !isSyncing && backfillProgress == null && draft.hasDestination && (draft.enabledTypes.isNotEmpty() || receive.enabled)
 }
 
 /** Everything the Health Connect screen can ask for; the view model implements it, previews can fake it. */
@@ -121,8 +126,15 @@ interface HealthActions {
     fun openBackfillDialog()
     fun dismissBackfillDialog()
     fun backfill(days: Int)
-    fun requestAllPermissions()
-    fun requestPermission(permission: String)
+
+    /** The Grant button: the enabled types' reads and background reading. */
+    fun requestAccess()
+
+    /** History access for a backfill past 30 days; asked for from the backfill dialog only. */
+    fun requestHistoryPermission()
+
+    /** The read permission of the type in [HealthUiState.permissionPrompt]; the switch goes on once it is granted. */
+    fun requestTypePermission()
 
     // Receive (issue #62). Applied at once, like the other settings that are not part of the draft.
     fun setReceiveEnabled(enabled: Boolean)
@@ -166,6 +178,9 @@ class HealthConnectViewModel(
      */
     private var pendingReceiveType: WriteBackType? = null
 
+    /** The data type whose read permission was just asked for; like [pendingReceiveType], it goes on once granted. */
+    private var pendingType: HealthDataType? = null
+
     /** One-shot messages the screen shows as toasts. */
     private val _toasts = MutableSharedFlow<UiMessage>(extraBufferCapacity = 8)
     val toasts: SharedFlow<UiMessage> = _toasts.asSharedFlow()
@@ -207,12 +222,16 @@ class HealthConnectViewModel(
                 pendingReceiveType = null
                 if (type.writePermission in granted) enableReceiveType(type)
             }
+            pendingType?.let { type ->
+                pendingType = null
+                if (readPermission(type) in granted) editDraft { it.copy(enabledTypes = it.enabledTypes + type) }
+            }
 
             // A fresh install with permissions already granted: pre-select the granted types.
             val current = _state.value
             if (current.draft.enabledTypes.isEmpty() && granted.isNotEmpty()) {
                 val grantedTypes = HealthDataType.entries
-                    .filter { HealthPermission.getReadPermission(it.recordClass) in granted }
+                    .filter { readPermission(it) in granted }
                     .toSet()
                 if (grantedTypes.isNotEmpty()) {
                     settings.setHealthEnabledTypes(grantedTypes)
@@ -237,10 +256,10 @@ class HealthConnectViewModel(
             _toasts.tryEmit(UiMessage.InvalidUrl)
             return
         }
-        editWebhook { it.copy(urls = it.urls + url.trim()) }
+        editWebhook { it.withUrl(url.trim()) }
     }
 
-    override fun removeUrl(index: Int) = editWebhook { it.copy(urls = it.urls.filterIndexed { i, _ -> i != index }) }
+    override fun removeUrl(index: Int) = editWebhook { it.withoutUrlAt(index) }
 
     override fun addHeader(key: String, value: String) {
         if (key.isBlank() || value.isBlank()) {
@@ -253,8 +272,12 @@ class HealthConnectViewModel(
     override fun removeHeader(key: String) = editWebhook { it.copy(headers = it.headers - key) }
     override fun setSecret(secret: String) = editWebhook { it.copy(secret = secret) }
 
+    /**
+     * A type goes on only with its read permission granted. Grant asks for the enabled types
+     * alone, so a type switched on later asks for its own permission first.
+     */
     override fun toggleType(type: HealthDataType, enabled: Boolean) {
-        if (enabled && !_state.value.hasAnyPermission) {
+        if (enabled && readPermission(type) !in _state.value.grantedPermissions) {
             _state.update { it.copy(permissionPrompt = type) }
             return
         }
@@ -344,7 +367,7 @@ class HealthConnectViewModel(
                     return@launch
                 }
                 if (ops.grantedPermissions().isEmpty()) {
-                    _permissionRequests.tryEmit(HealthConnectManager.ALL_PERMISSIONS)
+                    _permissionRequests.tryEmit(accessPermissions())
                     return@launch
                 }
                 // Save first so the sync manager runs with what is on screen.
@@ -455,10 +478,15 @@ class HealthConnectViewModel(
         if (_state.value.backfillProgress != null) return
         viewModelScope.launch {
             _state.update { it.copy(backfillProgress = 0 to 1) }
-            val result = ops.backfill(days) { done, total -> _state.update { it.copy(backfillProgress = done to total) } }
+            val result = ops.backfill(
+                days,
+                onWaiting = { waiting -> _state.update { it.copy(backfillWaiting = waiting) } },
+                onProgress = { done, total -> _state.update { it.copy(backfillProgress = done to total) } }
+            )
             _state.update {
                 it.copy(
                     backfillProgress = null,
+                    backfillWaiting = false,
                     syncMessage = result.fold(
                         onSuccess = { count -> UiMessage.BackfillComplete(count) },
                         onFailure = { e -> UiMessage.SyncFailed(e.message ?: "") }
@@ -468,12 +496,23 @@ class HealthConnectViewModel(
         }
     }
 
-    override fun requestAllPermissions() {
-        _permissionRequests.tryEmit(HealthConnectManager.ALL_PERMISSIONS)
+    private fun readPermission(type: HealthDataType) = HealthPermission.getReadPermission(type.recordClass)
+
+    private fun accessPermissions(): Set<String> = HealthPermissionRequests.forGrant(_state.value.draft.enabledTypes)
+
+    override fun requestAccess() {
+        _permissionRequests.tryEmit(accessPermissions())
     }
 
-    override fun requestPermission(permission: String) {
-        _permissionRequests.tryEmit(setOf(permission))
+    override fun requestHistoryPermission() {
+        _permissionRequests.tryEmit(HealthPermissionRequests.forHistory(_state.value.draft.enabledTypes))
+    }
+
+    override fun requestTypePermission() {
+        val type = _state.value.permissionPrompt ?: return
+        pendingType = type
+        _state.update { it.copy(permissionPrompt = null) }
+        _permissionRequests.tryEmit(setOf(readPermission(type)))
     }
 
     // ==================== Receive (issue #62) ====================

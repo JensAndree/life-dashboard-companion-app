@@ -30,7 +30,7 @@ private val EMPTY_HEALTH_DATA = HealthData()
  */
 private const val MAX_PASSES_PER_BACKFILL_WINDOW = 400
 
-/** Serialises [HealthSyncManager.performSync] across every caller in the process. */
+/** Serialises [HealthSyncManager.performSync] and [HealthSyncManager.performBackfill] across every caller in the process. */
 private val SYNC_LOCK = Mutex()
 
 class HealthSyncManager(
@@ -50,7 +50,11 @@ class HealthSyncManager(
 
             val lastSyncTimestamps = enabledTypes.associateWith { type -> preferencesManager.getHealthWatermark(type) }
 
-            val healthDataResult = healthConnectManager.readHealthData(enabledTypes, lastSyncTimestamps)
+            val healthDataResult = healthConnectManager.readHealthData(
+                enabledTypes,
+                lastSyncTimestamps,
+                coveredUntil = enabledTypes.associateWith { preferencesManager.getHealthCoveredUntil(it) }
+            )
             if (healthDataResult.isFailure) {
                 return@withContext Result.failure(healthDataResult.exceptionOrNull() ?: Exception("Failed to read health data"))
             }
@@ -91,6 +95,7 @@ class HealthSyncManager(
      * One sync at a time per process. A manual sync, the tile, the broadcast and the worker
      * can all start one, and two running together would read and write the watermarks, the
      * Receive ledger and the pending acks over each other; the second simply waits its turn.
+     * A backfill holds the same lock, so a sync started during one waits for it to end.
      */
     suspend fun performSync(): Result<HealthSyncResult> = withContext(Dispatchers.IO) {
         SYNC_LOCK.withLock { performSyncLocked() }
@@ -157,10 +162,15 @@ class HealthSyncManager(
             preferencesManager.setPendingDeletions(pendingDeletions)
 
             for (pass in 1..MAX_SYNC_PASSES) {
-                // Re-read watermarks each pass; the previous pass advanced them.
+                // Re-read watermarks each pass; the previous pass advanced them. The range each
+                // type is read over is stored alongside, see LookbackWindow.
                 val lastSyncTimestamps = enabledTypes.associateWith { type -> preferencesManager.getHealthWatermark(type) }
 
-                val healthDataResult = healthConnectManager.readHealthData(enabledTypes, lastSyncTimestamps)
+                val healthDataResult = healthConnectManager.readHealthData(
+                    enabledTypes,
+                    lastSyncTimestamps,
+                    coveredUntil = enabledTypes.associateWith { preferencesManager.getHealthCoveredUntil(it) }
+                )
                 if (healthDataResult.isFailure) {
                     if (anyData) break
                     return Result.failure(
@@ -174,7 +184,7 @@ class HealthSyncManager(
                     // the app's own (Receive), the read left them out but moved the watermark
                     // past them, and without storing it here they would be read and counted
                     // again on every sync for the whole lookback window.
-                    updateSyncTimestamps(healthData, mutableMapOf())
+                    updateSyncTimestamps(healthData, mutableMapOf(), holdGapAnchors = webhookUrls.isNotEmpty())
                     break
                 }
                 anyData = true
@@ -221,7 +231,7 @@ class HealthSyncManager(
                 val bucketsToSend = resolved.series.values.sumOf { it.size }
                 if (recordsToSend == 0 && bucketsToSend == 0) {
                     val passCounts = mutableMapOf<HealthDataType, Int>()
-                    updateSyncTimestamps(healthData, passCounts)
+                    updateSyncTimestamps(healthData, passCounts, holdGapAnchors = true)
                     preferencesManager.setBucketCarry(carried)
                     passCounts.forEach { (type, count) -> syncCounts.merge(type, count, Int::plus) }
                     if (isLastPass) break
@@ -249,6 +259,7 @@ class HealthSyncManager(
                     recordCount = totalRecords,
                     logType = LogType.HEALTH_CONNECT,
                     customHeaders = preferencesManager.getHealthWebhookHeaders(),
+                    urlsWithoutHeaders = preferencesManager.getHealthUrlsWithoutHeaders(),
                     signingSecret = preferencesManager.getHealthWebhookSecret(),
                     source = sourcePost
                 )
@@ -277,7 +288,8 @@ class HealthSyncManager(
                 }
 
                 if (postResult.isFailure) {
-                    PendingSyncStore.forContext(context).enqueue(
+                    PendingSyncStore.enqueue(
+                        context = context,
                         payload = jsonPayload,
                         dataType = "health_connect",
                         logType = LogType.HEALTH_CONNECT.name,
@@ -299,7 +311,8 @@ class HealthSyncManager(
             // one leaves nothing new to read, so the loop above ends without building a payload
             // and the deletions would sit in storage until some later sync happens to carry
             // records. That is the reported case in issue #61, so they get a payload of their
-            // own, carrying no records.
+            // own, carrying no records. So do records the read could not see (OutsideWindow),
+            // which may be all that a watch uploaded after a long time away.
             var deletionsDelivered = false
             if (!pendingDeletions.isEmpty && webhookUrls.isNotEmpty()) {
                 val deletionPayload = buildJsonPayload(
@@ -317,6 +330,7 @@ class HealthSyncManager(
                     recordCount = 0,
                     logType = LogType.HEALTH_CONNECT,
                     customHeaders = preferencesManager.getHealthWebhookHeaders(),
+                    urlsWithoutHeaders = preferencesManager.getHealthUrlsWithoutHeaders(),
                     signingSecret = preferencesManager.getHealthWebhookSecret(),
                     source = sourcePost
                 )
@@ -331,7 +345,8 @@ class HealthSyncManager(
                     receive(writeBack, sourcePost, postResult)
                 }
                 if (postResult.isFailure) {
-                    PendingSyncStore.forContext(context).enqueue(
+                    PendingSyncStore.enqueue(
+                        context = context,
                         payload = deletionPayload,
                         dataType = "health_connect",
                         logType = LogType.HEALTH_CONNECT.name,
@@ -438,6 +453,7 @@ class HealthSyncManager(
         recordCount = 0,
         logType = LogType.HEALTH_CONNECT,
         customHeaders = preferencesManager.getHealthWebhookHeaders(),
+        urlsWithoutHeaders = preferencesManager.getHealthUrlsWithoutHeaders(),
         signingSecret = preferencesManager.getHealthWebhookSecret(),
         source = post,
         logSuccess = false
@@ -452,10 +468,23 @@ class HealthSyncManager(
      * bounds so receivers can distinguish them; records still carry uuids, so re-received
      * overlaps deduplicate server-side. Stops at the first failed delivery so a rerun can
      * resume; [onProgress] reports (completedWindows, totalWindows).
+     *
+     * Holds the sync lock for its whole run. It draws the same sequence numbers a sync does,
+     * and a sync beside it would interleave its payloads and counters with the backfill's; so a
+     * backfill waits for a running sync, and a sync waits for the backfill. [onWaiting] says
+     * true when the backfill has to wait, and false once it may start.
      */
     suspend fun performBackfill(
         days: Int,
+        onWaiting: (Boolean) -> Unit = {},
         onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        SYNC_LOCK.withLockReportingWait(onWaiting) { performBackfillLocked(days, onProgress) }
+    }
+
+    private suspend fun performBackfillLocked(
+        days: Int,
+        onProgress: (Int, Int) -> Unit
     ): Result<Int> = withContext(Dispatchers.IO) {
         val webhookUrls = preferencesManager.getHealthWebhookUrls()
         if (webhookUrls.isEmpty()) {
@@ -557,6 +586,7 @@ class HealthSyncManager(
                     recordCount = recordCount,
                     logType = LogType.HEALTH_CONNECT,
                     customHeaders = preferencesManager.getHealthWebhookHeaders(),
+                    urlsWithoutHeaders = preferencesManager.getHealthUrlsWithoutHeaders(),
                     signingSecret = preferencesManager.getHealthWebhookSecret()
                 )
                 val postResult = webhookManager.postData(payload)
@@ -649,10 +679,13 @@ class HealthSyncManager(
             // type that runs out of time or budget errors out here, which keeps its token (the
             // feed was not consumed) and names it in deletions_unavailable for this payload.
             val timeoutMs = DeletionTracking.timeoutFor(System.currentTimeMillis() - now)
+            // Where this sync's read of the type starts, so the feed can name what changed
+            // before it: the read below never sees those records (see OutsideWindow).
+            val readFrom = LookbackWindow.of(Instant.ofEpochMilli(now), preferencesManager.getHealthCoveredUntil(type)).start
             val result = if (timeoutMs == 0L) {
                 ChangesResult(error = "skipped: deletion budget spent")
             } else {
-                withTimeoutOrNull(timeoutMs) { healthConnectManager.readDeletions(type, usable, ownRecordIds) }
+                withTimeoutOrNull(timeoutMs) { healthConnectManager.readDeletions(type, usable, ownRecordIds, readFrom) }
                     ?: ChangesResult(error = "timed out after $timeoutMs ms")
             }
             // An expired token is reported even when the app decided that itself, as long as
@@ -666,24 +699,38 @@ class HealthSyncManager(
             // for good, without naming the type in deletions_unavailable either.
             if (result.nextToken != null) {
                 val part = mapOf(type to results.getValue(type))
-                val found = DeletionSummary(DeletionTracking.merge(part), DeletionTracking.expiredTypes(part))
+                val found = DeletionTracking.summary(part)
                 if (!found.isEmpty) preferencesManager.setPendingDeletions(preferencesManager.getPendingDeletions().merge(found))
                 preferencesManager.setHealthChangesToken(type, result.nextToken, now)
             }
         }
 
-        return DeletionSummary(
-            deleted = DeletionTracking.merge(results),
-            expiredTypes = DeletionTracking.expiredTypes(results)
-        )
+        return DeletionTracking.summary(results)
     }
 
-    private fun updateSyncTimestamps(data: HealthData, syncCounts: MutableMap<HealthDataType, Int>) {
+    /**
+     * Stores what [data] moved: the watermarks and the lookback anchors. [holdGapAnchors] is for
+     * a pass that sends no payload to a webhook: a type whose range named a lookback gap keeps
+     * its anchor then, so the gap is named again in the next payload instead of never (see
+     * LookbackWindow.keepingGapsOpen). An MQTT-only setup has no payload to name it in and
+     * publishes the newest values only, which a gap in older records does not change.
+     */
+    private fun updateSyncTimestamps(
+        data: HealthData,
+        syncCounts: MutableMap<HealthDataType, Int>,
+        holdGapAnchors: Boolean = false
+    ) {
         // Watermarks are the max metadata.lastModifiedTime of each delivered batch, so late
         // backfills and edits (old record timestamps, recent modification) are caught by the
         // next sync instead of being skipped forever.
         data.watermarks.forEach { (type, watermark) ->
             preferencesManager.setHealthWatermark(type, watermark)
+        }
+        // After the watermarks: a stop in between leaves the older anchor, which only reads a
+        // wider range than needed, never a narrower one.
+        val anchors = if (holdGapAnchors) LookbackWindow.keepingGapsOpen(data.coveredUntil, data.diagnostics) else data.coveredUntil
+        anchors.forEach { (type, until) ->
+            preferencesManager.setHealthCoveredUntil(type, until)
         }
 
         if (data.steps.isNotEmpty()) {
@@ -1236,6 +1283,8 @@ class HealthSyncManager(
                             put("last_sync", diag.lastSync?.toString())
                             put("error", diag.error)
                             put("own_records_skipped", diag.ownRecordsSkipped)
+                            put("read_from", diag.readFrom?.toString())
+                            put("lookback_gap_from", diag.lookbackGapFrom?.toString())
                         }
                     }
                 }

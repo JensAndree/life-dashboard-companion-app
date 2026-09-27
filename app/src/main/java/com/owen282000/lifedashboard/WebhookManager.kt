@@ -47,6 +47,8 @@ class WebhookManager(
     private val recordCount: Int? = null,
     private val logType: LogType = LogType.HEALTH_CONNECT,
     private val customHeaders: Map<String, String> = emptyMap(),
+    /** URLs that get none of [customHeaders]: the ones QR pairing added, see [WebhookSupport.headersFor]. */
+    private val urlsWithoutHeaders: Set<String> = emptySet(),
     private val signingSecret: String? = null,
     /**
      * The one URL that gets the `writeback` block and whose response is read. Every other URL
@@ -58,7 +60,9 @@ class WebhookManager(
      * so a successful one writes no log row and counts nowhere; a failed one is still logged,
      * because that is where the user looks when Receive stops.
      */
-    private val logSuccess: Boolean = true
+    private val logSuccess: Boolean = true,
+    /** Replaces the user's "Allow plain HTTP" setting when set; for tests against a local http:// server. */
+    private val allowHttpOverride: Boolean? = null
 ) {
 
     /**
@@ -66,16 +70,7 @@ class WebhookManager(
      * from KeyChain, which blocks and must not run on the main thread.
      */
     private fun buildClient(): OkHttpClient {
-        val builder = OkHttpClient.Builder()
-            .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            // The app retries on its own terms (postToUrl), so OkHttp must not add its own
-            // attempts underneath: it repeats a 408 once inside every attempt, which made a
-            // request timeout six requests instead of three (F8 of P2-4). A connection that
-            // fails is still tried on the next address (fast fallback is separate from this),
-            // and one that drops is retried by the app with its backoff.
-            .retryOnConnectionFailure(false)
+        val builder = baseClientBuilder()
         val alias = context?.let { PreferencesManager(it).clientCertAlias() }
         if (context != null && alias != null) {
             val setup = ClientCertSupport.sslSetup(context, alias)
@@ -147,7 +142,7 @@ class WebhookManager(
         val timestamp = System.currentTimeMillis()
 
         // HTTPS by default; plain HTTP only after the user opted in for private networks.
-        val allowHttp = context?.let { PreferencesManager(it).allowHttpWebhooks() } ?: false
+        val allowHttp = allowHttpOverride ?: context?.let { PreferencesManager(it).allowHttpWebhooks() } ?: false
         WebhookSupport.cleartextBlockReason(url, allowHttp)?.let { reason ->
             logWebhookCall(url, timestamp, null, false, reason, jsonPayload)
             return Result.failure(IOException(reason))
@@ -155,36 +150,56 @@ class WebhookManager(
 
         return try {
             val requestBody = jsonPayload.toRequestBody(jsonMediaType)
-            val requestBuilder = Request.Builder()
-                .url(url)
-                .post(requestBody)
-            customHeaders.forEach { (key, value) -> requestBuilder.header(key, value) }
+            val headers = WebhookSupport.headersFor(url, customHeaders, urlsWithoutHeaders)
             val requestSignature = if (!signingSecret.isNullOrBlank()) WebhookSupport.signature(jsonPayload, signingSecret) else null
-            if (requestSignature != null) {
-                requestBuilder.header(WebhookSupport.SIGNATURE_HEADER, requestSignature)
+
+            // The same POST for the configured URL and for a redirect on its host: OkHttp would
+            // turn a 301 or 302 into a GET without the body and report that as a success.
+            fun requestTo(target: String): Request {
+                val requestBuilder = Request.Builder()
+                    .url(target)
+                    .post(requestBody)
+                headers.forEach { (key, value) -> requestBuilder.header(key, value) }
+                if (requestSignature != null) {
+                    requestBuilder.header(WebhookSupport.SIGNATURE_HEADER, requestSignature)
+                }
+                return requestBuilder.build()
             }
-            val request = requestBuilder.build()
 
             var lastException: Exception? = null
             var statusCode: Int? = null
             var errorMessage: String? = null
             for (attempt in 1..MAX_RETRIES) {
                 try {
-                    // Suspends rather than blocks: a stopped worker cancels the call itself
-                    // instead of waiting out the read timeout of up to 10 seconds.
-                    client.newCall(request).executeAsync().use { response ->
-                        statusCode = response.code
-                        if (response.isSuccessful) {
-                            // Only the source URL's body is read, and only up to the cap; a
-                            // body that is cut off is handed over as oversized rather than as
-                            // a truncated document that would fail its signature anyway.
-                            val sourceResponse = if (readResponse) readSourceResponse(response, requestSignature) else null
-                            val note = if (attempt > 1) "Recovered on attempt $attempt of $MAX_RETRIES" else null
-                            logWebhookCall(url, timestamp, statusCode, true, null, jsonPayload, note)
-                            return Result.success(sourceResponse)
-                        }
-                        lastException = IOException("HTTP ${response.code}: ${response.message}")
-                        errorMessage = "HTTP ${response.code}: ${response.message}"
+                    var target = url
+                    var redirects = 0
+                    while (true) {
+                        // Suspends rather than blocks: a stopped worker cancels the call itself
+                        // instead of waiting out the read timeout of up to 10 seconds.
+                        val next = client.newCall(requestTo(target)).executeAsync().use { response ->
+                            statusCode = response.code
+                            if (response.code in 300..399 && redirects < WebhookSupport.MAX_REDIRECTS) {
+                                WebhookSupport.followableRedirect(target, response.header("Location"), allowHttp)
+                                    ?.let { return@use it }
+                            }
+                            if (response.isSuccessful) {
+                                // Only the source URL's body is read, and only up to the cap; a
+                                // body that is cut off is handed over as oversized rather than as
+                                // a truncated document that would fail its signature anyway.
+                                val sourceResponse = if (readResponse) readSourceResponse(response, requestSignature) else null
+                                val note = listOfNotNull(
+                                    if (attempt > 1) "Recovered on attempt $attempt of $MAX_RETRIES" else null,
+                                    if (target != url) WebhookSupport.redirectNote(target) else null
+                                ).joinToString(". ").ifEmpty { null }
+                                logWebhookCall(url, timestamp, statusCode, true, null, jsonPayload, note)
+                                return Result.success(sourceResponse)
+                            }
+                            errorMessage = failureMessage(response)
+                            lastException = IOException(errorMessage)
+                            null
+                        } ?: break
+                        target = next
+                        redirects++
                     }
                     // Client errors (401, 404, ...) will not change on retry; fail fast so the
                     // sync is not delayed by pointless backoff.
@@ -282,5 +297,34 @@ class WebhookManager(
         private const val TIMEOUT_SECONDS = 10L
         private const val MAX_RETRIES = 3
         private const val INITIAL_RETRY_DELAY_MS = 1000L
+
+        /** Everything about the client except the certificate, which needs a Context. */
+        internal fun baseClientBuilder(): OkHttpClient.Builder = OkHttpClient.Builder()
+            .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            // The app retries on its own terms (postToUrl), so OkHttp must not add its own
+            // attempts underneath: it repeats a 408 once inside every attempt, which made a
+            // request timeout six requests instead of three (F8 of P2-4). A connection that
+            // fails is still tried on the next address (fast fallback is separate from this),
+            // and one that drops is retried by the app with its backoff.
+            .retryOnConnectionFailure(false)
+            // OkHttp does not follow redirects: it would repeat the body, the signature and the
+            // custom headers to wherever the Location points, another host or plain http://,
+            // past the cleartext check that only saw the configured URL, and it turns a POST
+            // into a GET on 301 and 302. postToUrl follows a redirect on the same host itself
+            // (WebhookSupport.followableRedirect); any other 3xx fails the delivery, and the
+            // log names where it pointed.
+            .followRedirects(false)
+            .followSslRedirects(false)
+
+        /** The log line for a response that was not a success. */
+        internal fun failureMessage(response: okhttp3.Response): String =
+            if (response.code in 300..399) {
+                val target = response.header("Location")?.let { response.request.url.resolve(it)?.host }
+                WebhookSupport.redirectMessage(response.code, target)
+            } else {
+                "HTTP ${response.code}: ${response.message}"
+            }
     }
 }

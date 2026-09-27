@@ -26,7 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MonitorHeart
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -45,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,8 +71,10 @@ import androidx.compose.ui.unit.sp
 import com.owen282000.lifedashboard.LogType
 import com.owen282000.lifedashboard.MqttBroker
 import com.owen282000.lifedashboard.MqttSection
+import com.owen282000.lifedashboard.MqttSupport
 import com.owen282000.lifedashboard.OnboardingSupport
 import com.owen282000.lifedashboard.OnboardingSupport.Step
+import com.owen282000.lifedashboard.PairingSource
 import com.owen282000.lifedashboard.PreferencesManager
 import com.owen282000.lifedashboard.R
 import com.owen282000.lifedashboard.WebhookManager
@@ -93,7 +96,9 @@ private val ChoiceShape = RoundedCornerShape(20.dp)
 fun OnboardingScreen(
     onFinished: () -> Unit,
     /** Opens the QR scanner. Its result arrives as a pairing dialog over this screen. */
-    onScanRequested: () -> Unit = {}
+    onScanRequested: () -> Unit = {},
+    /** The code the pairing dialog last wrote, so this screen can show what it filled in. */
+    paired: OnboardingSupport.WizardPairing? = null
 ) {
     val context = LocalContext.current
     val preferencesManager = remember { PreferencesManager(context) }
@@ -120,6 +125,18 @@ fun OnboardingScreen(
 
     var preset by remember { mutableStateOf(OnboardingSupport.TypePreset.ESSENTIALS) }
 
+    // Pairing writes the settings itself, the same as from the tabs; the wizard only takes
+    // over what it wrote, as the tabs' ViewModels reload it, so the card and the summary
+    // stop saying nothing happened.
+    LaunchedEffect(paired) {
+        if (paired == null) return@LaunchedEffect
+        useWebhook = true
+        webhookUrl = paired.link.url
+        webhookSecret = paired.link.secret
+        allowHttp = preferencesManager.allowHttpWebhooks()
+        pingResult = null
+    }
+
     var stepIndex by remember { mutableStateOf(0) }
     val steps = OnboardingSupport.stepsFor(healthConnect)
     val step = steps[stepIndex.coerceIn(0, steps.lastIndex)]
@@ -128,7 +145,7 @@ fun OnboardingScreen(
         if (applyChoices) {
             val url = webhookUrl.trim()
             val secret = webhookSecret.trim()
-            if (useWebhook && url.isNotBlank()) {
+            if (OnboardingSupport.writesWebhook(useWebhook, url, secret, paired?.link)) {
                 if (healthConnect) {
                     preferencesManager.setHealthWebhookUrls(listOf(url))
                     if (secret.isNotBlank()) preferencesManager.setHealthWebhookSecret(secret)
@@ -261,11 +278,18 @@ fun OnboardingScreen(
                                     onValueChange = { webhookUrl = it; pingResult = null },
                                     label = stringResource(R.string.webhook_add_a_url)
                                 )
+                                val sections = OnboardingSupport.webhookSections(
+                                    healthConnect,
+                                    screenTime,
+                                    webhookUrl.trim(),
+                                    webhookSecret.trim(),
+                                    paired
+                                )
                                 Text(
                                     stringResource(
                                         when {
-                                            healthConnect && screenTime -> R.string.onboarding_webhook_applied
-                                            healthConnect -> R.string.onboarding_webhook_applied_health
+                                            sections.size == 2 -> R.string.onboarding_webhook_applied
+                                            PairingSource.HEALTH in sections -> R.string.onboarding_webhook_applied_health
                                             else -> R.string.onboarding_webhook_applied_screen
                                         }
                                     ),
@@ -316,7 +340,9 @@ fun OnboardingScreen(
                                                         context = context,
                                                         dataType = "test",
                                                         recordCount = 0,
-                                                        logType = LogType.HEALTH_CONNECT
+                                                        logType = LogType.HEALTH_CONNECT,
+                                                        // Signed like the tabs' ping, so a paired receiver can check it.
+                                                        signingSecret = webhookSecret.trim().ifBlank { null }
                                                     ).postData(payload).isSuccess
                                                 } catch (e: kotlinx.coroutines.CancellationException) {
                                                     throw e
@@ -349,7 +375,7 @@ fun OnboardingScreen(
                             }
 
                             ChoiceCard(
-                                icon = Icons.Outlined.Home,
+                                icon = Icons.Outlined.Hub,
                                 title = stringResource(R.string.onboarding_mqtt_option),
                                 description = stringResource(R.string.onboarding_mqtt_desc),
                                 selected = useMqtt,
@@ -377,6 +403,14 @@ fun OnboardingScreen(
                                         checked = mqttTls,
                                         onCheckedChange = { mqttTls = it },
                                         colors = SwitchDefaults.colors(checkedTrackColor = Accent)
+                                    )
+                                }
+                                // The same hint as on the MQTT card: the wizard starts on 1883 without TLS.
+                                if (!mqttTls && mqttHost.isNotBlank() && !MqttSupport.isPrivateHost(mqttHost)) {
+                                    Text(
+                                        stringResource(R.string.mqtt_plaintext_public_host),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
                                     )
                                 }
                                 FilledField(

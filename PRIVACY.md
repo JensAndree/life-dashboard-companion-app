@@ -2,7 +2,7 @@
 
 Life Dashboard Companion is a self-hosting tool. It reads health and screen time data on your Android device and sends it to servers that you configure. It can also take measurements that your own Home Assistant sends back and write them into Health Connect, for the types you switch on. The developer never receives, stores or sees any of your data.
 
-Last updated 26 September 2026, for version 1.20.
+Last updated 27 September 2026, for version 1.21.0.
 
 ## What the app reads
 
@@ -18,6 +18,10 @@ Nothing, unless you switch on **Receive** on the Health Connect tab. That featur
 
 Data leaves your device only to the destinations you enter yourself: your own webhook URLs (HTTPS by default; plain HTTP only after an explicit opt-in) and your own MQTT broker. The app does not contact any other server. There are no analytics, no crash reporting services and no advertising SDKs.
 
+Besides the data types you enable, a payload carries the app version, and a Screen Time payload also carries the phone's manufacturer and model in a `device` field.
+
+MQTT travels in plain text unless you switch on TLS for the broker: on the default port 1883 anyone on the network between the phone and the broker can read the values, and the broker's username and password. States are published retained, so the broker keeps the latest value of every sensor (for Screen Time also the most used apps) until the next publish replaces it, and any client allowed to subscribe to those topics can read them. Switching MQTT off in the app does not remove them; clear the topics on the broker if you stop using it.
+
 If you install the app from the Google Play Store, the store itself may collect installation and crash statistics under Google's own policies; the app does not add to that.
 
 ## What stays on the device
@@ -26,9 +30,13 @@ If you install the app from the Google Play Store, the store itself may collect 
 - Sync watermarks, so each record is sent once.
 - With Receive on: a small ledger of the measurement ids the app has written and their versions, so a measurement Home Assistant sends again is not written twice. It is excluded from Android's backup and cleared when the address or the secret changes.
 - A delivery log (the Logs tab) with the last 100 deliveries. Payloads in this log are truncated unless you switch on "Keep full payloads". For measurements received from Home Assistant the log keeps the entity id, the type, the measurement time and the outcome; the values only with "Keep full payloads". You can clear the log at any time.
-- An outbox of payloads that could not be delivered yet, so a sync survives a server being down. It is emptied once delivery succeeds.
+- An outbox of payloads that could not be delivered yet, so a sync survives a server being down. A payload leaves it once delivered, after a week of refusals by the server, or as the oldest when 700 Health Connect payloads are waiting, and Screen Time keeps only its newest snapshot of the last 7 days; whatever leaves undelivered is noted in the Logs tab and a notification.
 
-Uninstalling the app removes all of this. The settings export feature writes an encrypted file that only you can decrypt with the password you chose.
+Uninstalling the app removes all of this.
+
+Exports are files you create yourself: health data, screen time, logs, or your settings. The app writes each one to its own cache folder and hands it to the Android share sheet. The copy in the cache stays until your next export replaces it, or until the app starts more than a day later and removes it. The app you share it with keeps its own copy under its own rules.
+
+A settings export with secrets is encrypted with the password you chose. Without secrets it is plain JSON, and that still includes your webhook URLs and MQTT hosts. A webhook URL can be a credential in itself: a Home Assistant automation's `/api/webhook/<id>` address, for instance, accepts anything posted to it. Share such a file only with someone you would give that access to.
 
 ## Permissions
 

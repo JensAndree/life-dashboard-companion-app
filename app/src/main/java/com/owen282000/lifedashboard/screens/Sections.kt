@@ -168,7 +168,13 @@ fun WebhookRow(
         onToggle = onToggle
     ) {
         webhook.urls.forEachIndexed { index, url ->
-            ListLine(text = url, onRemove = { onRemoveUrl(index) })
+            // Said only while there are headers to hold back: without any it changes nothing.
+            val withoutHeaders = webhook.headers.isNotEmpty() && url in webhook.urlsWithoutHeaders
+            ListLine(
+                text = url,
+                secondary = if (withoutHeaders) stringResource(R.string.webhook_url_without_headers) else null,
+                onRemove = { onRemoveUrl(index) }
+            )
         }
         // Typing a URL and 64 hex characters on a phone keyboard is where people give up,
         // so on an empty card scanning leads. Once a receiver is set up it steps back into
@@ -433,6 +439,13 @@ fun MqttRow(
                 colors = SwitchDefaults.colors(checkedTrackColor = accent)
             )
         }
+        if (!broker.useTls && broker.host.isNotBlank() && !MqttSupport.isPrivateHost(broker.host)) {
+            Text(
+                stringResource(R.string.mqtt_plaintext_public_host),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
         FilledField(
             value = broker.username ?: "",
             onValueChange = { onChange(mqtt.withActiveBroker(broker.copy(username = it.ifBlank { null }))) },
@@ -556,7 +569,6 @@ fun DataTypesRow(
     onToggle: () -> Unit,
     onToggleType: (HealthDataType, Boolean) -> Unit
 ) {
-    val hasAnyPermission = grantedPermissions.isNotEmpty()
     ExpandableRow(
         icon = Icons.Outlined.MonitorHeart,
         accent = accent,
@@ -568,7 +580,7 @@ fun DataTypesRow(
     ) {
         HealthDataType.entries.forEach { dataType ->
             val permission = HealthPermission.getReadPermission(dataType.recordClass)
-            val granted = permission in grantedPermissions || hasAnyPermission
+            val granted = permission in grantedPermissions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

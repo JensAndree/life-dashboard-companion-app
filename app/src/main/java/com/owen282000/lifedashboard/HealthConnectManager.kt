@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.changes.DeletionChange
+import androidx.health.connect.client.changes.UpsertionChange
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.*
 import androidx.health.connect.client.records.metadata.Device
@@ -20,7 +21,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 import kotlin.reflect.KClass
 
 class HealthConnectManager(
@@ -59,15 +59,17 @@ class HealthConnectManager(
     private val unreadTypes = mutableSetOf<HealthDataType>()
 
     /**
-     * Reads all enabled types. The default window is the trailing [LOOKBACK_HOURS]; backfill
-     * passes an explicit historical window (with empty lastSyncTimestamps so nothing is
-     * filtered against watermarks).
+     * Reads all enabled types. The default window per type reaches [LookbackWindow.LOOKBACK]
+     * back from [coveredUntil], the last read that took all of it (see [LookbackWindow]);
+     * backfill passes an explicit historical window (with empty lastSyncTimestamps so nothing
+     * is filtered against watermarks).
      */
     suspend fun readHealthData(
         enabledTypes: Set<HealthDataType>,
         lastSyncTimestamps: Map<HealthDataType, Watermark?>,
         windowStart: Instant? = null,
-        windowEnd: Instant? = null
+        windowEnd: Instant? = null,
+        coveredUntil: Map<HealthDataType, Instant?> = emptyMap()
     ): Result<HealthData> {
         return try {
             diagnostics.clear()
@@ -77,74 +79,76 @@ class HealthConnectManager(
             readStartedAt = System.currentTimeMillis()
             val grantedPermissions = bounded("the granted permissions") { getGrantedPermissions() }
             val endTime = windowEnd ?: Instant.now()
-            val startTime = windowStart ?: endTime.minus(LOOKBACK_HOURS, ChronoUnit.HOURS)
+            val windows = if (windowStart != null) emptyMap() else
+                enabledTypes.associateWith { LookbackWindow.of(endTime, coveredUntil[it]) }
+            fun startOf(type: HealthDataType): Instant = windowStart ?: windows.getValue(type).start
 
             val stepsData = if (HealthDataType.STEPS in enabledTypes)
-                readType(HealthDataType.STEPS) { readStepsData(startTime, endTime, lastSyncTimestamps[HealthDataType.STEPS]) } else emptyList()
+                readType(HealthDataType.STEPS) { readStepsData(startOf(HealthDataType.STEPS), endTime, lastSyncTimestamps[HealthDataType.STEPS]) } else emptyList()
             val sleepData = if (HealthDataType.SLEEP in enabledTypes)
-                readType(HealthDataType.SLEEP) { readSleepData(startTime, endTime, lastSyncTimestamps[HealthDataType.SLEEP]) } else emptyList()
+                readType(HealthDataType.SLEEP) { readSleepData(startOf(HealthDataType.SLEEP), endTime, lastSyncTimestamps[HealthDataType.SLEEP]) } else emptyList()
             val heartRateData = if (HealthDataType.HEART_RATE in enabledTypes)
-                readType(HealthDataType.HEART_RATE) { readHeartRateData(startTime, endTime, lastSyncTimestamps[HealthDataType.HEART_RATE]) } else emptyList()
+                readType(HealthDataType.HEART_RATE) { readHeartRateData(startOf(HealthDataType.HEART_RATE), endTime, lastSyncTimestamps[HealthDataType.HEART_RATE]) } else emptyList()
             val distanceData = if (HealthDataType.DISTANCE in enabledTypes)
-                readType(HealthDataType.DISTANCE) { readDistanceData(startTime, endTime, lastSyncTimestamps[HealthDataType.DISTANCE]) } else emptyList()
+                readType(HealthDataType.DISTANCE) { readDistanceData(startOf(HealthDataType.DISTANCE), endTime, lastSyncTimestamps[HealthDataType.DISTANCE]) } else emptyList()
             val activeCaloriesData = if (HealthDataType.ACTIVE_CALORIES in enabledTypes)
-                readType(HealthDataType.ACTIVE_CALORIES) { readActiveCaloriesData(startTime, endTime, lastSyncTimestamps[HealthDataType.ACTIVE_CALORIES]) } else emptyList()
+                readType(HealthDataType.ACTIVE_CALORIES) { readActiveCaloriesData(startOf(HealthDataType.ACTIVE_CALORIES), endTime, lastSyncTimestamps[HealthDataType.ACTIVE_CALORIES]) } else emptyList()
             val totalCaloriesData = if (HealthDataType.TOTAL_CALORIES in enabledTypes)
-                readType(HealthDataType.TOTAL_CALORIES) { readTotalCaloriesData(startTime, endTime, lastSyncTimestamps[HealthDataType.TOTAL_CALORIES]) } else emptyList()
+                readType(HealthDataType.TOTAL_CALORIES) { readTotalCaloriesData(startOf(HealthDataType.TOTAL_CALORIES), endTime, lastSyncTimestamps[HealthDataType.TOTAL_CALORIES]) } else emptyList()
             val weightData = if (HealthDataType.WEIGHT in enabledTypes)
-                readType(HealthDataType.WEIGHT) { readWeightData(startTime, endTime, lastSyncTimestamps[HealthDataType.WEIGHT]) } else emptyList()
+                readType(HealthDataType.WEIGHT) { readWeightData(startOf(HealthDataType.WEIGHT), endTime, lastSyncTimestamps[HealthDataType.WEIGHT]) } else emptyList()
             val heightData = if (HealthDataType.HEIGHT in enabledTypes)
-                readType(HealthDataType.HEIGHT) { readHeightData(startTime, endTime, lastSyncTimestamps[HealthDataType.HEIGHT]) } else emptyList()
+                readType(HealthDataType.HEIGHT) { readHeightData(startOf(HealthDataType.HEIGHT), endTime, lastSyncTimestamps[HealthDataType.HEIGHT]) } else emptyList()
             val bloodPressureData = if (HealthDataType.BLOOD_PRESSURE in enabledTypes)
-                readType(HealthDataType.BLOOD_PRESSURE) { readBloodPressureData(startTime, endTime, lastSyncTimestamps[HealthDataType.BLOOD_PRESSURE]) } else emptyList()
+                readType(HealthDataType.BLOOD_PRESSURE) { readBloodPressureData(startOf(HealthDataType.BLOOD_PRESSURE), endTime, lastSyncTimestamps[HealthDataType.BLOOD_PRESSURE]) } else emptyList()
             val bloodGlucoseData = if (HealthDataType.BLOOD_GLUCOSE in enabledTypes)
-                readType(HealthDataType.BLOOD_GLUCOSE) { readBloodGlucoseData(startTime, endTime, lastSyncTimestamps[HealthDataType.BLOOD_GLUCOSE]) } else emptyList()
+                readType(HealthDataType.BLOOD_GLUCOSE) { readBloodGlucoseData(startOf(HealthDataType.BLOOD_GLUCOSE), endTime, lastSyncTimestamps[HealthDataType.BLOOD_GLUCOSE]) } else emptyList()
             val oxygenSaturationData = if (HealthDataType.OXYGEN_SATURATION in enabledTypes)
-                readType(HealthDataType.OXYGEN_SATURATION) { readOxygenSaturationData(startTime, endTime, lastSyncTimestamps[HealthDataType.OXYGEN_SATURATION]) } else emptyList()
+                readType(HealthDataType.OXYGEN_SATURATION) { readOxygenSaturationData(startOf(HealthDataType.OXYGEN_SATURATION), endTime, lastSyncTimestamps[HealthDataType.OXYGEN_SATURATION]) } else emptyList()
             val bodyTemperatureData = if (HealthDataType.BODY_TEMPERATURE in enabledTypes)
-                readType(HealthDataType.BODY_TEMPERATURE) { readBodyTemperatureData(startTime, endTime, lastSyncTimestamps[HealthDataType.BODY_TEMPERATURE]) } else emptyList()
+                readType(HealthDataType.BODY_TEMPERATURE) { readBodyTemperatureData(startOf(HealthDataType.BODY_TEMPERATURE), endTime, lastSyncTimestamps[HealthDataType.BODY_TEMPERATURE]) } else emptyList()
             val respiratoryRateData = if (HealthDataType.RESPIRATORY_RATE in enabledTypes)
-                readType(HealthDataType.RESPIRATORY_RATE) { readRespiratoryRateData(startTime, endTime, lastSyncTimestamps[HealthDataType.RESPIRATORY_RATE]) } else emptyList()
+                readType(HealthDataType.RESPIRATORY_RATE) { readRespiratoryRateData(startOf(HealthDataType.RESPIRATORY_RATE), endTime, lastSyncTimestamps[HealthDataType.RESPIRATORY_RATE]) } else emptyList()
             val restingHeartRateData = if (HealthDataType.RESTING_HEART_RATE in enabledTypes)
-                readType(HealthDataType.RESTING_HEART_RATE) { readRestingHeartRateData(startTime, endTime, lastSyncTimestamps[HealthDataType.RESTING_HEART_RATE]) } else emptyList()
+                readType(HealthDataType.RESTING_HEART_RATE) { readRestingHeartRateData(startOf(HealthDataType.RESTING_HEART_RATE), endTime, lastSyncTimestamps[HealthDataType.RESTING_HEART_RATE]) } else emptyList()
             val exerciseData = if (HealthDataType.EXERCISE in enabledTypes)
-                readType(HealthDataType.EXERCISE) { readExerciseData(startTime, endTime, lastSyncTimestamps[HealthDataType.EXERCISE]) } else emptyList()
+                readType(HealthDataType.EXERCISE) { readExerciseData(startOf(HealthDataType.EXERCISE), endTime, lastSyncTimestamps[HealthDataType.EXERCISE]) } else emptyList()
             val hydrationData = if (HealthDataType.HYDRATION in enabledTypes)
-                readType(HealthDataType.HYDRATION) { readHydrationData(startTime, endTime, lastSyncTimestamps[HealthDataType.HYDRATION]) } else emptyList()
+                readType(HealthDataType.HYDRATION) { readHydrationData(startOf(HealthDataType.HYDRATION), endTime, lastSyncTimestamps[HealthDataType.HYDRATION]) } else emptyList()
             val nutritionData = if (HealthDataType.NUTRITION in enabledTypes)
-                readType(HealthDataType.NUTRITION) { readNutritionData(startTime, endTime, lastSyncTimestamps[HealthDataType.NUTRITION]) } else emptyList()
+                readType(HealthDataType.NUTRITION) { readNutritionData(startOf(HealthDataType.NUTRITION), endTime, lastSyncTimestamps[HealthDataType.NUTRITION]) } else emptyList()
             val mindfulnessData = if (HealthDataType.MINDFULNESS in enabledTypes)
-                readType(HealthDataType.MINDFULNESS) { readMindfulnessData(startTime, endTime, lastSyncTimestamps[HealthDataType.MINDFULNESS]) } else emptyList()
+                readType(HealthDataType.MINDFULNESS) { readMindfulnessData(startOf(HealthDataType.MINDFULNESS), endTime, lastSyncTimestamps[HealthDataType.MINDFULNESS]) } else emptyList()
             val bodyFatData = if (HealthDataType.BODY_FAT in enabledTypes)
-                readType(HealthDataType.BODY_FAT) { readBodyFatData(startTime, endTime, lastSyncTimestamps[HealthDataType.BODY_FAT]) } else emptyList()
+                readType(HealthDataType.BODY_FAT) { readBodyFatData(startOf(HealthDataType.BODY_FAT), endTime, lastSyncTimestamps[HealthDataType.BODY_FAT]) } else emptyList()
             val leanBodyMassData = if (HealthDataType.LEAN_BODY_MASS in enabledTypes)
-                readType(HealthDataType.LEAN_BODY_MASS) { readLeanBodyMassData(startTime, endTime, lastSyncTimestamps[HealthDataType.LEAN_BODY_MASS]) } else emptyList()
+                readType(HealthDataType.LEAN_BODY_MASS) { readLeanBodyMassData(startOf(HealthDataType.LEAN_BODY_MASS), endTime, lastSyncTimestamps[HealthDataType.LEAN_BODY_MASS]) } else emptyList()
             val boneMassData = if (HealthDataType.BONE_MASS in enabledTypes)
-                readType(HealthDataType.BONE_MASS) { readBoneMassData(startTime, endTime, lastSyncTimestamps[HealthDataType.BONE_MASS]) } else emptyList()
+                readType(HealthDataType.BONE_MASS) { readBoneMassData(startOf(HealthDataType.BONE_MASS), endTime, lastSyncTimestamps[HealthDataType.BONE_MASS]) } else emptyList()
             val bodyWaterMassData = if (HealthDataType.BODY_WATER_MASS in enabledTypes)
-                readType(HealthDataType.BODY_WATER_MASS) { readBodyWaterMassData(startTime, endTime, lastSyncTimestamps[HealthDataType.BODY_WATER_MASS]) } else emptyList()
+                readType(HealthDataType.BODY_WATER_MASS) { readBodyWaterMassData(startOf(HealthDataType.BODY_WATER_MASS), endTime, lastSyncTimestamps[HealthDataType.BODY_WATER_MASS]) } else emptyList()
             val hrvData = if (HealthDataType.HEART_RATE_VARIABILITY in enabledTypes)
-                readType(HealthDataType.HEART_RATE_VARIABILITY) { readHrvData(startTime, endTime, lastSyncTimestamps[HealthDataType.HEART_RATE_VARIABILITY]) } else emptyList()
+                readType(HealthDataType.HEART_RATE_VARIABILITY) { readHrvData(startOf(HealthDataType.HEART_RATE_VARIABILITY), endTime, lastSyncTimestamps[HealthDataType.HEART_RATE_VARIABILITY]) } else emptyList()
             val menstruationPeriodData = if (HealthDataType.MENSTRUATION_PERIOD in enabledTypes)
-                readType(HealthDataType.MENSTRUATION_PERIOD) { readMenstruationPeriodData(startTime, endTime, lastSyncTimestamps[HealthDataType.MENSTRUATION_PERIOD]) } else emptyList()
+                readType(HealthDataType.MENSTRUATION_PERIOD) { readMenstruationPeriodData(startOf(HealthDataType.MENSTRUATION_PERIOD), endTime, lastSyncTimestamps[HealthDataType.MENSTRUATION_PERIOD]) } else emptyList()
             val menstruationFlowData = if (HealthDataType.MENSTRUATION_FLOW in enabledTypes)
-                readType(HealthDataType.MENSTRUATION_FLOW) { readMenstruationFlowData(startTime, endTime, lastSyncTimestamps[HealthDataType.MENSTRUATION_FLOW]) } else emptyList()
+                readType(HealthDataType.MENSTRUATION_FLOW) { readMenstruationFlowData(startOf(HealthDataType.MENSTRUATION_FLOW), endTime, lastSyncTimestamps[HealthDataType.MENSTRUATION_FLOW]) } else emptyList()
             val basalMetabolicRateData = if (HealthDataType.BASAL_METABOLIC_RATE in enabledTypes)
-                readType(HealthDataType.BASAL_METABOLIC_RATE) { readBasalMetabolicRateData(startTime, endTime, lastSyncTimestamps[HealthDataType.BASAL_METABOLIC_RATE]) } else emptyList()
+                readType(HealthDataType.BASAL_METABOLIC_RATE) { readBasalMetabolicRateData(startOf(HealthDataType.BASAL_METABOLIC_RATE), endTime, lastSyncTimestamps[HealthDataType.BASAL_METABOLIC_RATE]) } else emptyList()
             val vo2MaxData = if (HealthDataType.VO2_MAX in enabledTypes)
-                readType(HealthDataType.VO2_MAX) { readVo2MaxData(startTime, endTime, lastSyncTimestamps[HealthDataType.VO2_MAX]) } else emptyList()
+                readType(HealthDataType.VO2_MAX) { readVo2MaxData(startOf(HealthDataType.VO2_MAX), endTime, lastSyncTimestamps[HealthDataType.VO2_MAX]) } else emptyList()
             val skinTemperatureData = if (HealthDataType.SKIN_TEMPERATURE in enabledTypes)
-                readType(HealthDataType.SKIN_TEMPERATURE) { readSkinTemperatureData(startTime, endTime, lastSyncTimestamps[HealthDataType.SKIN_TEMPERATURE]) } else emptyList()
+                readType(HealthDataType.SKIN_TEMPERATURE) { readSkinTemperatureData(startOf(HealthDataType.SKIN_TEMPERATURE), endTime, lastSyncTimestamps[HealthDataType.SKIN_TEMPERATURE]) } else emptyList()
             val basalBodyTemperatureData = if (HealthDataType.BASAL_BODY_TEMPERATURE in enabledTypes)
-                readType(HealthDataType.BASAL_BODY_TEMPERATURE) { readBasalBodyTemperatureData(startTime, endTime, lastSyncTimestamps[HealthDataType.BASAL_BODY_TEMPERATURE]) } else emptyList()
+                readType(HealthDataType.BASAL_BODY_TEMPERATURE) { readBasalBodyTemperatureData(startOf(HealthDataType.BASAL_BODY_TEMPERATURE), endTime, lastSyncTimestamps[HealthDataType.BASAL_BODY_TEMPERATURE]) } else emptyList()
             val intermenstrualBleedingData = if (HealthDataType.INTERMENSTRUAL_BLEEDING in enabledTypes)
-                readType(HealthDataType.INTERMENSTRUAL_BLEEDING) { readIntermenstrualBleedingData(startTime, endTime, lastSyncTimestamps[HealthDataType.INTERMENSTRUAL_BLEEDING]) } else emptyList()
+                readType(HealthDataType.INTERMENSTRUAL_BLEEDING) { readIntermenstrualBleedingData(startOf(HealthDataType.INTERMENSTRUAL_BLEEDING), endTime, lastSyncTimestamps[HealthDataType.INTERMENSTRUAL_BLEEDING]) } else emptyList()
             val ovulationTestData = if (HealthDataType.OVULATION_TEST in enabledTypes)
-                readType(HealthDataType.OVULATION_TEST) { readOvulationTestData(startTime, endTime, lastSyncTimestamps[HealthDataType.OVULATION_TEST]) } else emptyList()
+                readType(HealthDataType.OVULATION_TEST) { readOvulationTestData(startOf(HealthDataType.OVULATION_TEST), endTime, lastSyncTimestamps[HealthDataType.OVULATION_TEST]) } else emptyList()
             val cervicalMucusData = if (HealthDataType.CERVICAL_MUCUS in enabledTypes)
-                readType(HealthDataType.CERVICAL_MUCUS) { readCervicalMucusData(startTime, endTime, lastSyncTimestamps[HealthDataType.CERVICAL_MUCUS]) } else emptyList()
+                readType(HealthDataType.CERVICAL_MUCUS) { readCervicalMucusData(startOf(HealthDataType.CERVICAL_MUCUS), endTime, lastSyncTimestamps[HealthDataType.CERVICAL_MUCUS]) } else emptyList()
             val sexualActivityData = if (HealthDataType.SEXUAL_ACTIVITY in enabledTypes)
-                readType(HealthDataType.SEXUAL_ACTIVITY) { readSexualActivityData(startTime, endTime, lastSyncTimestamps[HealthDataType.SEXUAL_ACTIVITY]) } else emptyList()
+                readType(HealthDataType.SEXUAL_ACTIVITY) { readSexualActivityData(startOf(HealthDataType.SEXUAL_ACTIVITY), endTime, lastSyncTimestamps[HealthDataType.SEXUAL_ACTIVITY]) } else emptyList()
 
             // Ensure every enabled type has a diagnostics entry (even if it read 0 records or
             // its permission is missing) and enrich each with permission + lastSync info.
@@ -163,7 +167,9 @@ class HealthConnectManager(
                     error = null
                 )).copy(
                     permissionGranted = granted,
-                    lastSync = lastSyncTimestamps[type]?.time
+                    lastSync = lastSyncTimestamps[type]?.time,
+                    readFrom = startOf(type),
+                    lookbackGapFrom = windows[type]?.gapFrom
                 )
             }
 
@@ -204,7 +210,10 @@ class HealthConnectManager(
                 diagnostics = diagnostics.toMap(),
                 watermarks = watermarks.toMap(),
                 cappedTypes = cappedTypes.toSet(),
-                unreadTypes = unreadTypes.toSet()
+                unreadTypes = unreadTypes.toSet(),
+                // A backfill reads history and moves nothing of the sync's, this included.
+                coveredUntil = if (windowStart != null) emptyMap() else
+                    LookbackWindow.covered(enabledTypes, cappedTypes, unreadTypes, endTime, coveredUntil)
             ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -704,12 +713,6 @@ class HealthConnectManager(
         }
     }
 
-    suspend fun hasPermissions(requiredPermissions: Set<String> = ALL_PERMISSIONS): Boolean {
-        if (!isHealthConnectAvailable()) return false
-        val granted = healthConnectClient.permissionController.getGrantedPermissions()
-        return requiredPermissions.all { it in granted }
-    }
-
     suspend fun getGrantedPermissions(): Set<String> {
         if (!isHealthConnectAvailable()) return emptySet()
         return healthConnectClient.permissionController.getGrantedPermissions()
@@ -720,8 +723,10 @@ class HealthConnectManager(
      * time, and returns the token to store for next time (issue #61).
      *
      * A deletion leaves no record behind, so a read can never see it; only the changes API
-     * reports one, by the id of the record that is gone. Upsertions are ignored here: the normal
-     * read already carries them, and asking for them twice would only duplicate work.
+     * reports one, by the id of the record that is gone. Upsertions are not sent from here: the
+     * normal read carries them. Only the ones timestamped before [readFrom], where that read's
+     * range starts, are counted into [ChangesResult.outsideWindow], because the read never sees
+     * them (see [OutsideWindow]).
      *
      * The first call for a type has no token, so it registers one and returns nothing. That is
      * correct rather than unfortunate: Health Connect starts tracking from the moment a token is
@@ -736,7 +741,12 @@ class HealthConnectManager(
      * tell that a deleted record came from Home Assistant in the first place; those are left
      * out, because Home Assistant withdrew them itself and does not need to hear it back.
      */
-    suspend fun readDeletions(type: HealthDataType, storedToken: String?, ownRecordIds: Set<String> = emptySet()): ChangesResult {
+    suspend fun readDeletions(
+        type: HealthDataType,
+        storedToken: String?,
+        ownRecordIds: Set<String> = emptySet(),
+        readFrom: Instant? = null
+    ): ChangesResult {
         if (!isHealthConnectAvailable()) {
             return ChangesResult(error = "Health Connect is not available")
         }
@@ -747,6 +757,7 @@ class HealthConnectManager(
             }
 
             val deleted = mutableListOf<DeletedRecord>()
+            var outside: OutsideWindow? = null
             var token: String = storedToken
             var expired = false
             // A changes feed is paged; hasMore says another page is waiting behind this token.
@@ -765,6 +776,13 @@ class HealthConnectManager(
                         deleted += DeletedRecord(DeletionTracking.payloadKey(type), change.recordId)
                     }
                 }
+                if (readFrom != null) {
+                    val times = response.changes.filterIsInstance<UpsertionChange>()
+                        .map { it.record }
+                        .filterNot { it.metadata.id in ownRecordIds || isOwnWrite(it) }
+                        .mapNotNull { recordTime(it) }
+                    LookbackWindow.outside(times, readFrom)?.let { outside = outside?.plus(it) ?: it }
+                }
                 token = response.nextChangesToken
                 if (!response.hasMore) break
                 // Reading advanced the token past the pages already taken, so what is left
@@ -778,7 +796,8 @@ class HealthConnectManager(
                 nextToken = token,
                 // Both mean the same thing to a receiver: deletions exist for this type that
                 // the app cannot name, so reconcile it against a backfill window instead.
-                expired = expired || unread
+                expired = expired || unread,
+                outsideWindow = outside
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             // A timeout or a stopped worker is not a failed read; it has to unwind, or the
@@ -789,6 +808,54 @@ class HealthConnectManager(
             // were read successfully, and a missing deletion is a smaller problem than no payload.
             ChangesResult(error = e.message ?: e::class.java.simpleName)
         }
+    }
+
+    /** Whether Receive wrote [record], as [ownRecordsPartition] decides it. */
+    private fun isOwnWrite(record: Record): Boolean = ResilientReadLogic.isReceiveWrite(
+        record.metadata.dataOrigin.packageName,
+        context.packageName,
+        record.metadata.clientRecordId
+    )
+
+    /**
+     * The time a read's range is matched on: an interval record's start, an instant record's
+     * time. Per class, because the library keeps the two interfaces internal.
+     */
+    private fun recordTime(record: Record): Instant? = when (record) {
+        is StepsRecord -> record.startTime
+        is SleepSessionRecord -> record.startTime
+        is HeartRateRecord -> record.startTime
+        is DistanceRecord -> record.startTime
+        is ActiveCaloriesBurnedRecord -> record.startTime
+        is TotalCaloriesBurnedRecord -> record.startTime
+        is ExerciseSessionRecord -> record.startTime
+        is HydrationRecord -> record.startTime
+        is NutritionRecord -> record.startTime
+        is MindfulnessSessionRecord -> record.startTime
+        is MenstruationPeriodRecord -> record.startTime
+        is SkinTemperatureRecord -> record.startTime
+        is WeightRecord -> record.time
+        is HeightRecord -> record.time
+        is BloodPressureRecord -> record.time
+        is BloodGlucoseRecord -> record.time
+        is OxygenSaturationRecord -> record.time
+        is BodyTemperatureRecord -> record.time
+        is RespiratoryRateRecord -> record.time
+        is RestingHeartRateRecord -> record.time
+        is BodyFatRecord -> record.time
+        is LeanBodyMassRecord -> record.time
+        is BoneMassRecord -> record.time
+        is BodyWaterMassRecord -> record.time
+        is HeartRateVariabilityRmssdRecord -> record.time
+        is MenstruationFlowRecord -> record.time
+        is BasalMetabolicRateRecord -> record.time
+        is Vo2MaxRecord -> record.time
+        is BasalBodyTemperatureRecord -> record.time
+        is IntermenstrualBleedingRecord -> record.time
+        is OvulationTestRecord -> record.time
+        is CervicalMucusRecord -> record.time
+        is SexualActivityRecord -> record.time
+        else -> null
     }
 
     // ==================== Write side (Receive, issue #62) ====================
@@ -1075,8 +1142,6 @@ class HealthConnectManager(
     }
 
     companion object {
-        private const val LOOKBACK_HOURS = 168L // 7 days
-
         /** How long one Health Connect call may take before the read gives it up; see [bounded]. */
         const val CALL_TIMEOUT_MS = 10_000L
 
@@ -1112,15 +1177,9 @@ class HealthConnectManager(
          */
         const val HISTORY_PERMISSION = "android.permission.health.READ_HEALTH_DATA_HISTORY"
 
-        fun getPermissionsForTypes(types: Set<HealthDataType>): Set<String> {
-            val permissions = types.map { HealthPermission.getReadPermission(it.recordClass) }.toMutableSet()
-            permissions.add(BACKGROUND_PERMISSION)
-            permissions.add(HISTORY_PERMISSION)
-            return permissions
-        }
-
-        // Derived from the enum so newly added data types can never be missing from the
-        // permission request (a hand-maintained list had drifted to 23 of 33 types).
+        // Every permission the app can hold, derived from the enum so a new data type can never
+        // be missing (a hand-maintained list had drifted to 23 of 33 types). ManifestPermissionsTest
+        // checks it against the manifest; requests are built by HealthPermissionRequests.
         val ALL_PERMISSIONS: Set<String> =
             HealthDataType.entries.map { HealthPermission.getReadPermission(it.recordClass) }.toSet() +
                 setOf(BACKGROUND_PERMISSION, HISTORY_PERMISSION)

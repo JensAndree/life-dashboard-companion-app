@@ -5,7 +5,7 @@
 - Android 8.0+ (minSdk 26); some Health Connect features need a recent Android version
 - The [Health Connect](https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata) app installed
 - Usage access permission, for the Screen Time feature
-- A webhook endpoint, or an MQTT broker for the Home Assistant route
+- Home Assistant with the Life Dashboard integration (HACS), a webhook endpoint, or an MQTT broker
 
 ## Install
 
@@ -32,7 +32,7 @@ More on the project layout and the build in [building.md](building.md).
 
 ## First run
 
-The first launch opens a short setup wizard. It asks three questions and nothing else: what to sync (Health Connect, Screen Time, or both), where the data should go (a webhook URL with a test ping, an MQTT broker for Home Assistant, or both) and, when Health Connect is in, which data types to start with (the essentials, all 33, or none yet). The destination only applies to the sources you picked. Everything it sets can be changed later on the Health and Screen Time tabs, and **Skip setup** takes you straight to those tabs.
+The first launch opens a short setup wizard. It asks three questions and nothing else: what to sync (Health Connect, Screen Time, or both), where the data should go (scan the Home Assistant integration's pairing code, which is recommended, a webhook URL with a test ping, an MQTT broker, or a combination) and, when Health Connect is in, which data types to start with (the essentials, all 33, or none yet). The destination only applies to the sources you picked. Everything it sets can be changed later on the Health and Screen Time tabs, and **Skip setup** takes you straight to those tabs.
 
 After the wizard:
 
@@ -40,23 +40,48 @@ After the wizard:
 2. **Grant Usage Access** for Screen Time - go to Settings when prompted
 3. **Add webhook headers** (optional) - auth tokens or API keys
 4. **Set the sync schedule** - an interval (minimum 15 minutes) or fixed times of day, per tab, with optional weekdays and quiet hours
-5. **Tap "Preview Data"** to inspect the payload, then **"Sync Now"** to send
+5. **Tap "View"** to inspect the payload, then **"Sync Now"** to send
 
-The **Send Test Ping** button, in the wizard and on both tabs, confirms your server accepts a POST before waiting for real data.
+**Send Test Ping** in the wizard, and **Test ping** on both tabs, confirm your server accepts a POST before waiting for real data.
 
 To see exactly what the app sends before you build a receiver, run `python3 scripts/webhook-receiver.py` on a laptop on the same Wi-Fi (it prints its LAN address), add `http://<that address>:8765/health` as a webhook URL, switch on **Advanced > Allow plain HTTP**, and tap Test ping. Every POST is printed with its headers and appended to `received.jsonl`; pass `--secret <your HMAC secret>` to verify signatures.
 
 Moving from another device? Import your settings under **About > Backup & restore** instead of typing everything again; see [settings-backup.md](settings-backup.md).
 
-## Phone to Home Assistant in two minutes
+## Phone to Home Assistant
 
 Two routes, and neither needs YAML. The **Life Dashboard integration** (installed through
-HACS from [life-dashboard-ha](https://github.com/owen282000/life-dashboard-ha)) needs no
-broker at all, is paired by scanning a code, and writes every synced day into long-term
-statistics on its own date, so a backfill becomes history rather than one big number on
-today. **MQTT** needs a broker Home Assistant already talks to, and publishes retained
-latest values that survive a restart. Pick one: running both gives you two devices
-holding the same numbers.
+HACS from [life-dashboard-ha](https://github.com/owen282000/life-dashboard-ha)) is the
+recommended one: it needs no broker at all, is paired by scanning a code, and writes every
+synced day into long-term statistics on its own date, so a backfill becomes history rather
+than one big number on today. **MQTT** is the alternative for a setup that already has a
+broker Home Assistant talks to, and publishes retained latest values that survive a
+restart. Pick one: running both gives you two devices holding the same numbers.
+
+### With the integration
+
+You need Home Assistant 2026.3 or newer with [HACS](https://hacs.xyz) installed, and the
+app on the phone. Count on 15 to 30 minutes the first time, and longer if HACS is not
+installed yet. The pairing itself is the quick part: once Home Assistant shows the code,
+the phone is set up in a minute.
+
+1. **Add the repository to HACS.** Use the
+   [Open in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=owen282000&repository=life-dashboard-ha&category=integration)
+   link, or in HACS open the menu, pick **Custom repositories** and add
+   `https://github.com/owen282000/life-dashboard-ha` with the type **Integration**. The
+   integration is not in the default HACS list yet.
+2. **Download** Life Dashboard in HACS.
+3. **Restart Home Assistant.** A new integration is only loaded at startup.
+4. **Add the integration.** Settings > Devices & services > Add integration, search for
+   **Life Dashboard** and give the phone a name. The address is filled in with the one your
+   browser is using; the phone has to be able to reach it.
+5. **Scan the QR code** the dialog shows, with the phone's camera or with **Scan a pairing
+   code** in the app, and tap **Pair**. [Pairing by QR code](#pairing-by-qr-code) below
+   has the details.
+6. **Grant and sync.** On the Health tab tap **Grant**, switch on the types you want, and
+   tap **Sync Now**. The phone appears under Settings > Devices & services > Life Dashboard
+   with a sensor for each type it sent. For screen time, allow usage access on the Screen
+   Time tab and sync there too; for the past, tap **Backfill** on the Health tab.
 
 ### Pairing by QR code
 
@@ -74,6 +99,12 @@ will be replaced, and offers to allow plain HTTP when the address is an internal
 `http://` one. Nothing is written until you tap **Pair**. What is synced, and on what
 schedule, stays a choice on the tabs: a scanned code only ever fills in the address and
 the secret.
+
+An address added by pairing gets none of the section's custom headers. Those were typed for
+the receivers you entered yourself, and a code can come from anyone, so an API key never
+follows a scanned code to its host. The address says so on the Webhook card while the
+section has headers. To send them there anyway, type the address in by hand: it stays in
+the list once and from then on gets the headers.
 
 Without the app installed, the code opens a page that explains where to get it. The secret
 travels in the part of the link after the `#`, which a browser never sends to any server.
@@ -101,7 +132,7 @@ measurements** is on, which is what the integration's **Send history to phone** 
 The MQTT route needs no YAML and no server-side setup beyond a broker Home Assistant already talks to.
 
 1. In Home Assistant, install the **Mosquitto broker** add-on (Settings > Add-ons) and add the **MQTT** integration if it is not there yet. Create a user for the app under Settings > People, or in the add-on's login list; a dedicated account keeps the app's credentials out of your own.
-2. In the app, open the Health tab, expand **MQTT**, switch on **Enable MQTT publishing** and fill in the broker host (the Home Assistant IP on your LAN, or its hostname), port 1883 and that username and password. Screen Time shares the broker by default.
+2. In the app, open the Health tab, expand **MQTT**, switch on **Enable MQTT publishing** and fill in the broker host (the Home Assistant IP on your LAN, or its hostname), port 1883 and that username and password. Screen Time shares the broker by default. Port 1883 is plain MQTT, fine on your own network; a broker reached over the internet needs **TLS** on (usually port 8883), and the card and the setup wizard say so below the port while TLS is off and the host is not a LAN or VPN address.
 3. Tap **Sync Now**. Within a few seconds Settings > Devices & services > MQTT lists a device named **Life Dashboard Companion** with a sensor for every synced type that has a value: 24 of the 33 Health Connect types (today's steps, distance and calories, the latest heart rate, weight, sleep duration, blood pressure and the other measurements) plus screen time. Workouts, meals, mindfulness sessions and cycle tracking are events and stay webhook-only.
 
 Two phones on the same broker? Give each one a name under **Advanced > Phone name**. A named phone becomes its own device, **Life Dashboard Companion (Pixel 8)**, with its own topics under the base topic; a phone without a name keeps publishing exactly as before, so nothing changes for a household with one phone. When you name or rename a phone, its next publish clears the retained topics of the old device, but Home Assistant keeps the device itself: delete the old **Life Dashboard Companion** under Settings > Devices & services > MQTT once the new one has appeared. With two phones that both still publish nameless, name both before the first one syncs, or expect the other's device to drop out of Home Assistant until its next publish brings it back.

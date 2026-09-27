@@ -37,7 +37,6 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -176,7 +175,7 @@ fun HealthConnectContent(
                 state.availability != HcAvailability.AVAILABLE ->
                     BannerChip(stringResource(R.string.health_install), accent, filled = true, onClick = onInstallHealthConnect)
                 state.hasPermissions == false ->
-                    BannerChip(stringResource(R.string.common_grant), accent, filled = true, onClick = actions::requestAllPermissions)
+                    BannerChip(stringResource(R.string.common_grant), accent, filled = true, onClick = actions::requestAccess)
                 else ->
                     BannerChip(stringResource(R.string.health_open_app), accent, icon = Icons.AutoMirrored.Filled.OpenInNew, onClick = onOpenHealthConnect)
             }
@@ -325,7 +324,8 @@ fun HealthConnectContent(
         }
         state.backfillProgress?.let { (done, total) ->
             Text(
-                stringResource(R.string.health_backfill_progress, done, total),
+                if (state.backfillWaiting) stringResource(R.string.health_backfill_waiting)
+                else stringResource(R.string.health_backfill_progress, done, total),
                 style = MaterialTheme.typography.bodySmall,
                 color = accent,
                 modifier = Modifier.padding(horizontal = 4.dp)
@@ -364,10 +364,7 @@ fun HealthConnectContent(
             title = { Text(stringResource(R.string.health_permission_required_title)) },
             text = { Text(stringResource(R.string.health_permission_needed, type.displayName)) },
             confirmButton = {
-                TextButton(onClick = {
-                    actions.requestPermission(HealthPermission.getReadPermission(type.recordClass))
-                    actions.dismissPermissionPrompt()
-                }) { Text(stringResource(R.string.common_grant), color = accent) }
+                TextButton(onClick = actions::requestTypePermission) { Text(stringResource(R.string.common_grant), color = accent) }
             },
             dismissButton = {
                 TextButton(onClick = actions::dismissPermissionPrompt) { Text(stringResource(R.string.common_cancel)) }
@@ -411,7 +408,7 @@ fun HealthConnectContent(
     if (state.backfillDialog) {
         // Without READ_HEALTH_DATA_HISTORY Health Connect only exposes the 30 days before the
         // first permission grant, so a 90/365 day backfill would silently return recent data
-        // only (#39). Granting happens via the normal permission flow.
+        // only (#39). This button is the one place that asks for history access.
         val hasHistoryPermission = HealthConnectManager.HISTORY_PERMISSION in state.grantedPermissions
         AlertDialog(
             onDismissRequest = actions::dismissBackfillDialog,
@@ -426,7 +423,7 @@ fun HealthConnectContent(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
-                        TextButton(onClick = actions::requestAllPermissions) {
+                        TextButton(onClick = actions::requestHistoryPermission) {
                             Text(stringResource(R.string.health_backfill_grant_history))
                         }
                     }
