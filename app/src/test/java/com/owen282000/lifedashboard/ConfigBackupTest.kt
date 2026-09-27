@@ -237,17 +237,19 @@ class ConfigBackupTest {
     }
 
     @Test
-    fun secretFreeBrokerKeepsTheCredentialsOfTheSameHostOnly() {
-        val onDevice = MqttBroker("broker.lan", 1883, false, "user", "pass")
-        val fromBackup = BrokerConfig(host = "Broker.lan", port = 8883)
+    fun secretFreeBrokerKeepsTheCredentialsOfTheSameBrokerOnly() {
+        val onDevice = MqttBroker("broker.lan", 8883, true, "user", "pass")
+        val fromBackup = BrokerConfig(host = "Broker.lan", port = 8883, useTls = true)
 
         val kept = fromBackup.toBroker(onDevice, backupHasSecrets = false)
         assertEquals("user", kept.username)
         assertEquals("pass", kept.password)
-        assertEquals("the rest comes from the backup", 8883, kept.port)
 
-        // Another broker never gets them, and a backup that carries secrets says what it means.
-        assertNull(BrokerConfig(host = "other.lan").toBroker(onDevice, backupHasSecrets = false).username)
+        // Another host, another port or no TLS is another broker: it never gets them, and
+        // they never go out in plain text. A backup that carries secrets says what it means.
+        assertNull(BrokerConfig(host = "other.lan", port = 8883, useTls = true).toBroker(onDevice, backupHasSecrets = false).username)
+        assertNull(fromBackup.copy(port = 1883).toBroker(onDevice, backupHasSecrets = false).username)
+        assertNull(fromBackup.copy(useTls = false).toBroker(onDevice, backupHasSecrets = false).password)
         assertNull(fromBackup.toBroker(onDevice, backupHasSecrets = true).username)
         assertEquals("new", fromBackup.copy(username = "new").toBroker(onDevice, backupHasSecrets = true).username)
     }

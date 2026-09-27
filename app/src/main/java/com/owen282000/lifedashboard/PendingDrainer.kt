@@ -1,17 +1,38 @@
 package com.owen282000.lifedashboard
 
 import android.content.Context
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 
 /**
  * Delivers queued outbox payloads using the CURRENT webhook configuration for each category,
  * so config changes made after a failure apply to the retried delivery too. Stops at the
  * first failure to preserve ordering; remaining items wait for the next drain (which runs at
- * the start of every sync). A payload the receiver refuses for good is dropped instead, see
- * [WebhookSupport.refusesPayload].
+ * the start of every sync).
+ *
+ * One exception to stopping (F6 of P2-4): a payload every webhook refused because of the
+ * payload itself ([WebhookSupport.refusesPayload]) is skipped, so it cannot hold back what
+ * was queued after it. It stays queued, because such a refusal can also come from a bug on
+ * the receiving side that an update fixes (the Home Assistant integration answers 400 for
+ * any error while reading a payload), and is dropped only after [REFUSED_MAX_AGE_MS] of
+ * refusals. Payloads carry a `sequence`, so a receiver can order what then arrives late.
  */
 object PendingDrainer {
 
-    suspend fun drain(context: Context) {
+    /** How long a refused payload is offered again before the outbox gives it up: a week. */
+    const val REFUSED_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
+
+    /**
+     * One drain at a time. The health and Screen Time syncs both drain first and can run
+     * together (the tile starts both), and two drains would post the same item twice and
+     * count its records twice.
+     */
+    private val lock = Mutex()
+
+    suspend fun drain(context: Context) = lock.withLock { drainLocked(context) }
+
+    private suspend fun drainLocked(context: Context) {
         val store = PendingSyncStore.forContext(context)
         val items = store.peekAll()
         if (items.isEmpty()) return
@@ -37,22 +58,41 @@ object PendingDrainer {
             )
 
             val result = webhookManager.postData(item.payload)
-            if (result.isSuccess) {
-                store.remove(item.id)
-                // A drained payload is a delivery like any other: it ends the failure streak
-                // and moves "Last sync". Without this, an outage followed by a sync with no
-                // new data left the failure notification and a red status in place while the
-                // queued data had in fact arrived (F5 of P2-4). Its records count for today
-                // now, since the failed attempt that queued it counted none.
-                SyncFailureNotifier.recordResult(context, logType, true)
-                SyncStatusStore.record(context, true, item.recordCount, logType)
-            } else if (result.exceptionOrNull() is PayloadRefusedException) {
-                // Refused for good (F6 of P2-4): it would never be accepted, and holding it
-                // would keep everything behind it waiting. The log row says it was dropped.
-                store.remove(item.id)
-            } else {
-                store.recordAttempt(item)
-                break
+            val refusal = result.exceptionOrNull() as? PayloadRefusedException
+            when {
+                result.isSuccess -> {
+                    store.remove(item.id)
+                    // A drained payload is a delivery like any other: it ends the failure streak
+                    // and moves "Last sync". Without this, an outage followed by a sync with no
+                    // new data left the failure notification and a red status in place while the
+                    // queued data had in fact arrived (F5 of P2-4). Its records count for today
+                    // now, since the failed attempt that queued it counted none.
+                    SyncFailureNotifier.recordResult(context, logType, true)
+                    SyncStatusStore.record(context, true, item.recordCount, logType)
+                }
+                refusal != null && System.currentTimeMillis() - item.createdAt >= REFUSED_MAX_AGE_MS -> {
+                    store.remove(item.id)
+                    preferencesManager.addWebhookLog(
+                        WebhookLog(
+                            id = UUID.randomUUID().toString(),
+                            timestamp = System.currentTimeMillis(),
+                            url = urls.joinToString(", "),
+                            statusCode = refusal.statusCode,
+                            success = false,
+                            errorMessage = "Refused for a week (HTTP ${refusal.statusCode}), dropped from the outbox",
+                            dataType = item.dataType,
+                            recordCount = item.recordCount,
+                            rawPayload = item.payload,
+                            logType = logType.name
+                        )
+                    )
+                }
+                // Skipped, not stopped at: see the class comment.
+                refusal != null -> store.recordAttempt(item)
+                else -> {
+                    store.recordAttempt(item)
+                    break
+                }
             }
         }
     }

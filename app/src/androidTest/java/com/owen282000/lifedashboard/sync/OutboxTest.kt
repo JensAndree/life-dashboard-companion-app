@@ -11,7 +11,7 @@ import com.owen282000.lifedashboard.HealthDataType.STEPS
 import com.owen282000.lifedashboard.HealthDataType.WEIGHT
 import com.owen282000.lifedashboard.HealthSyncResult
 import com.owen282000.lifedashboard.LogType
-import com.owen282000.lifedashboard.PayloadRefusedException
+import com.owen282000.lifedashboard.PendingDrainer
 import com.owen282000.lifedashboard.PendingSyncStore
 import com.owen282000.lifedashboard.ScreenTimeSyncManager
 import com.owen282000.lifedashboard.SyncStatusStore
@@ -141,12 +141,9 @@ class OutboxTest {
         fixture.insert(fixture.steps(12, ago(30), ago(20)))
         receiver.respond(TestSetup.HEALTH_PATH, code)
         val mark = receiver.exchanges.size
-        val result = TestSetup.syncManager().performSync()
-        // A refusal of the payload itself fails the sync (F6); every other outcome is queued.
-        if (code == 400) assertTrue("$code", result.exceptionOrNull() is PayloadRefusedException) else result.getOrThrow()
+        TestSetup.syncManager().performSync().getOrThrow()
         val message = context.appPreferences().getWebhookLogs(LogType.HEALTH_CONNECT).single().errorMessage.orEmpty()
-        val permanent = if (code == 400) "(permanent error, the receiver refused this payload, so it is dropped rather than queued for retry)" else "(permanent error, not retried)"
-        if (code in 400..499 && code != 408 && code != 429) assertTrue("$code: $message", message.endsWith(permanent))
+        if (code in 400..499 && code != 408 && code != 429) assertTrue("$code: $message", message.endsWith("(permanent error, not retried)"))
         receiver.since(mark).size
     }
 
@@ -169,46 +166,25 @@ class OutboxTest {
     }
 
     /**
-     * F6, the rule for permanent errors in the outbox. A refusal of the payload itself (400,
-     * 413, 422) will never turn into an acceptance, so the payload is dropped with a log row
-     * that says so, at the first attempt and when drained, and the drain carries on with the
-     * next item. Every other permanent error is about the receiver's setup (401, 403, a 404
-     * from a mistyped URL or a switched-off workflow), which a correction fixes, so those stay
-     * queued. Red on main: a 422 is queued like any failure and then blocks the head of the
-     * outbox until the cap of 50 pushes it out.
+     * F6, the rule for refusals in the outbox. The drain stops at the first payload that fails
+     * again, to keep the order while a receiver is down or misconfigured (401, 403, a 404 from a
+     * mistyped URL): a correction delivers the whole queue. A refusal of the payload itself
+     * (400, 413, 422) is skipped instead, so it cannot hold back what was queued after it, and
+     * stays queued for a week, since a bug in the receiver answers 400 too; after that it is
+     * dropped with a log row. Red on main: the drain stopped at a 422 and never got further.
      */
     @Test
-    fun onlyRefusalsOfThePayloadLeaveTheOutbox() = runBlocking {
-        for (code in listOf(401, 403, 404)) {
+    fun aRefusedPayloadIsSkippedNotStoppedAt() = runBlocking {
+        for (code in listOf(401, 403, 404, 422)) {
             AppStateRule.reset()
             TestSetup.health(receiver, setOf(STEPS))
             fixture.insert(fixture.steps(12, ago(30), ago(20)))
             receiver.respond(TestSetup.HEALTH_PATH, code)
             TestSetup.syncManager().performSync().getOrThrow()
-            assertEquals("a $code stays queued", 1, PendingSyncStore.forContext(context).size())
+            assertEquals("a $code at the first attempt is queued", 1, PendingSyncStore.forContext(context).size())
         }
 
-        AppStateRule.reset()
-        TestSetup.health(receiver, setOf(STEPS))
-        fixture.insert(fixture.steps(12, ago(30), ago(20)))
-        receiver.respond(TestSetup.HEALTH_PATH, 422)
-        val result = TestSetup.syncManager().performSync()
-        assertTrue("the sync reports the refusal", result.exceptionOrNull() is PayloadRefusedException)
-        assertEquals("a 422 is not queued", 0, PendingSyncStore.forContext(context).size())
-        assertTrue(context.appPreferences().getWebhookLogs(LogType.HEALTH_CONNECT).any { it.errorMessage.orEmpty().contains("dropped rather than queued") })
-
-        // With a second URL that is only down, the payload can still arrive there: queued.
-        AppStateRule.reset()
-        TestSetup.health(receiver, setOf(STEPS))
-        context.appPreferences().setHealthWebhookUrls(listOf(receiver.url(TestSetup.HEALTH_PATH), receiver.url("/api/webhook/ci-down")))
-        receiver.respond(TestSetup.HEALTH_PATH, 422)
-        receiver.respond("/api/webhook/ci-down", 503)
-        fixture.insert(fixture.steps(12, ago(30), ago(20)))
-        TestSetup.syncManager().performSync().getOrThrow()
-        assertEquals("another URL may still take it", 1, PendingSyncStore.forContext(context).size())
-
-        // Two payloads queued by a 503; when drained the first is refused for good and dropped,
-        // and the drain goes on to deliver the second instead of stopping behind it.
+        // Two payloads queued by a 503. When drained the first is refused, the second arrives.
         AppStateRule.reset()
         TestSetup.health(receiver, setOf(STEPS))
         receiver.respond(TestSetup.HEALTH_PATH, 503)
@@ -218,11 +194,37 @@ class OutboxTest {
         TestSetup.syncManager().performSync().getOrThrow()
         assertEquals(2, PendingSyncStore.forContext(context).size())
         receiver.respond(TestSetup.HEALTH_PATH, 422, 200)
-        val mark = receiver.exchanges.size
+        var mark = receiver.exchanges.size
         TestSetup.syncManager().performSync().getOrThrow()
-        assertEquals(0, PendingSyncStore.forContext(context).size())
         val delivered = receiver.since(mark).drop(1).map { Conservation.records(Conservation.parse(it.text)).map { r -> r.second } }
         assertEquals(listOf(second), delivered)
+        assertEquals("the refused one stays queued", 1, PendingSyncStore.forContext(context).size())
+
+        // With a second URL that is down, the drain waits for it: nothing after the refused one goes out.
+        AppStateRule.reset()
+        TestSetup.health(receiver, setOf(STEPS))
+        context.appPreferences().setHealthWebhookUrls(listOf(receiver.url(TestSetup.HEALTH_PATH), receiver.url("/api/webhook/ci-down")))
+        receiver.respond(TestSetup.HEALTH_PATH, 503)
+        receiver.respond("/api/webhook/ci-down", 503)
+        fixture.insert(fixture.steps(1, ago(50), ago(45)))
+        TestSetup.syncManager().performSync().getOrThrow()
+        val held = fixture.insert(fixture.steps(2, ago(40), ago(35)))
+        TestSetup.syncManager().performSync().getOrThrow()
+        receiver.respond(TestSetup.HEALTH_PATH, 422)
+        mark = receiver.exchanges.size
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(2, PendingSyncStore.forContext(context).size())
+        assertTrue(receiver.since(mark).none { exchange -> Conservation.records(Conservation.parse(exchange.text)).any { it.second in held } })
+
+        // Refused for a week: dropped, with a log row that says so.
+        AppStateRule.reset()
+        TestSetup.health(receiver, setOf(STEPS))
+        val weekAgo = System.currentTimeMillis() - PendingDrainer.REFUSED_MAX_AGE_MS - 60_000
+        PendingSyncStore.forContext(context).enqueue("""{"timestamp":"2026-01-01T00:00:00Z"}""", "health_connect", LogType.HEALTH_CONNECT.name, 1, weekAgo)
+        receiver.respond(TestSetup.HEALTH_PATH, 422)
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(0, PendingSyncStore.forContext(context).size())
+        assertTrue(context.appPreferences().getWebhookLogs(LogType.HEALTH_CONNECT).any { it.errorMessage.orEmpty().contains("dropped from the outbox") })
     }
 
     /**

@@ -24,16 +24,15 @@ All notable changes to this project are documented in this file. The format is b
 - After an outage, a sync that only delivered what had been queued left the failure
   notification, the red status and the old "Last sync" in place, although the data had
   arrived. Delivering queued data now counts as a successful sync.
-- A payload the webhook refused for good sat at the front of the outbox and held back every
-  delivery after it until 50 more had failed. A refusal of the payload itself (HTTP 400, 413
-  or 422) is now dropped with a log row that says so, and the sync reports it. A wrong key or
-  a webhook that is missing (401, 403, 404) still keeps the data queued until the settings are
-  fixed.
+- A payload the webhook refused sat at the front of the outbox and held back every payload
+  queued after it. A refusal of the payload itself (HTTP 400, 413 or 422) is now skipped, so
+  the rest is delivered. The refused payload stays queued for a week, in case a fix on the
+  receiving side makes it welcome, and is then dropped with a log row.
 - A webhook that answered HTTP 408 (request timeout) got six requests per sync instead of
   the three the retry rule allows, because the HTTP library repeated each one by itself.
 - Importing a settings file exported without secrets emptied the MQTT broker's username and
   password, although such an import promises to keep the credentials on the device. They are
-  now kept, for a broker on the same host.
+  now kept, for the same broker (host, port and TLS).
 - A watch that uploaded a large backlog in one go could still produce one oversized payload,
   the situation the crash in #38 came from. Health Connect gives every record of one upload
   the same modification time, and the limit per sync could not stop inside such a group. The

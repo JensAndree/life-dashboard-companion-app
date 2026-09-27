@@ -117,11 +117,13 @@ data class BrokerConfig(
      * This broker as it is written on import. From a backup exported without secrets, the
      * username and password already on the device for the same host are kept, the way webhook
      * secrets are: that export left them out, it did not say there are none (F9 of P2-4).
-     * For another host they are not carried over, so credentials never go to a broker they
-     * were not set for.
+     * Only for the same broker, meaning host, port and TLS: credentials set for one broker
+     * never go to another, and never go out in plain text where they had TLS.
      */
     fun toBroker(current: MqttBroker, backupHasSecrets: Boolean): MqttBroker {
-        val keep = !backupHasSecrets && current.host.isNotBlank() && current.host.equals(host.trim(), ignoreCase = true)
+        val sameBroker = current.host.isNotBlank() && current.host.equals(host.trim(), ignoreCase = true) &&
+            current.port == port && current.useTls == useTls
+        val keep = !backupHasSecrets && sameBroker
         return if (keep) toBroker().copy(username = current.username, password = current.password) else toBroker()
     }
 

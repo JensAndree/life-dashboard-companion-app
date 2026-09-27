@@ -34,16 +34,11 @@ class SourceResponse(
 data class WebhookOutcome(val sourceResponse: SourceResponse? = null)
 
 /**
- * The failure of a delivery that every webhook refused for good, see [WebhookSupport.refusesPayload].
- * The payload is dropped instead of queued: it would never be accepted, and in the outbox it
- * would block everything behind it.
+ * The failure of a delivery that every webhook refused because of the payload itself, see
+ * [WebhookSupport.refusesPayload]. The outbox drain skips such a payload instead of stopping
+ * behind it (see [PendingDrainer]).
  */
-class PayloadRefusedException(val statusCode: Int) :
-    IOException("The webhook refused this data for good (HTTP $statusCode), so it is not retried. The webhook logs have the details.")
-
-/** One URL's refusal, logged by [WebhookManager.postData] once it knows whether the payload is dropped. */
-private class UrlRefusal(val url: String, val timestamp: Long, val statusCode: Int, val errorMessage: String) :
-    IOException(errorMessage)
+class PayloadRefusedException(val statusCode: Int, message: String) : IOException(message)
 
 class WebhookManager(
     private val webhookUrls: List<String>,
@@ -118,7 +113,6 @@ class WebhookManager(
         var anySuccess = false
         var lastFailure: Exception? = null
         var sourceResponse: SourceResponse? = null
-        val refusals = mutableListOf<UrlRefusal>()
 
         for (url in webhookUrls) {
             val isSource = source != null && url == source.url
@@ -128,20 +122,13 @@ class WebhookManager(
                 if (isSource) sourceResponse = result.getOrNull()
             } else {
                 val failure = result.exceptionOrNull() as? Exception ?: Exception("Unknown error")
-                if (failure is UrlRefusal) refusals += failure else lastFailure = failure
+                // A refusal of the payload only counts as the outcome when every URL refused
+                // it: with one URL down and another refusing, the drain must wait for the one
+                // that is down, like for any outage.
+                if (failure !is PayloadRefusedException || lastFailure == null || lastFailure is PayloadRefusedException) {
+                    lastFailure = failure
+                }
             }
-        }
-
-        // Dropped only when no URL can still take it: with one URL down and another refusing,
-        // the payload is queued and the refusing URL sees it again on the drain.
-        val dropped = !anySuccess && lastFailure == null && refusals.isNotEmpty()
-        refusals.forEach { refusal ->
-            val consequence = if (dropped) "the receiver refused this payload, so it is dropped rather than queued for retry"
-                              else "not retried"
-            logWebhookCall(refusal.url, refusal.timestamp, refusal.statusCode, false, "${refusal.errorMessage} (permanent error, $consequence)", jsonPayload)
-        }
-        if (dropped) {
-            return@withContext Result.failure<WebhookOutcome>(PayloadRefusedException(refusals.last().statusCode))
         }
 
         if (anySuccess) {
@@ -202,14 +189,14 @@ class WebhookManager(
                     // Client errors (401, 404, ...) will not change on retry; fail fast so the
                     // sync is not delayed by pointless backoff.
                     if (!WebhookSupport.isRetryable(statusCode)) {
-                        val code = statusCode
-                        if (code != null && WebhookSupport.refusesPayload(code)) {
-                            return Result.failure(UrlRefusal(url, timestamp, code, errorMessage ?: "HTTP $code"))
-                        }
                         logWebhookCall(
                             url, timestamp, statusCode, false,
                             "$errorMessage (permanent error, not retried)", jsonPayload
                         )
+                        val code = statusCode
+                        if (code != null && WebhookSupport.refusesPayload(code)) {
+                            return Result.failure(PayloadRefusedException(code, errorMessage ?: "HTTP $code"))
+                        }
                         return Result.failure(lastException ?: IOException("Webhook post failed"))
                     }
                 } catch (e: IOException) {

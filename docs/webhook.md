@@ -406,7 +406,7 @@ Every configured webhook URL receives each payload. A sync counts as delivered w
 
 Failed posts are retried up to 3 times with exponential backoff (1s, 2s), but only for transient failures: network errors, timeouts, HTTP 408, 429, and 5xx. Permanent client errors (401, 404, ...) fail immediately without retrying. The logs distinguish "recovered after retry" from "failed after all attempts".
 
-A payload that failed is kept in an outbox on the phone and sent again, oldest first, at the start of the next sync, with the settings the app has by then. One kind of failure is not kept: HTTP 400, 413 and 422 say the receiver refuses this payload itself, which sending it again will not change, so the app drops it and the log row says so. Answer with one of those only for a payload you never want to see again. Everything else stays in the outbox, including 401, 403 and 404, since a wrong key or a mistyped or disabled webhook is fixed in the settings and the same payload then arrives.
+A payload that failed is kept in an outbox on the phone and sent again, oldest first, at the start of the next sync, with the settings the app has by then. The drain stops at the first payload that fails again, so the order holds while a receiver is down or misconfigured. One kind of refusal is skipped instead: HTTP 400, 413 and 422 say the receiver refuses this payload rather than every payload, so the payloads queued after it are sent anyway and may arrive before it (use `sequence` to order them). A skipped payload stays queued, in case the refusal came from a bug on the receiving side that an update fixes, and is dropped with a log row after a week.
 
 When an HMAC signing secret is configured (under Webhook Headers in the app), every POST includes:
 

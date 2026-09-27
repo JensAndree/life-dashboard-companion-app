@@ -63,16 +63,15 @@ object WebhookSupport {
     }
 
     /**
-     * Whether a status says the receiver refuses this payload itself, so it will never be
-     * accepted however often it is sent: 400, 413 and 422. Such a payload is dropped rather
-     * than queued, because in the outbox it would hold back everything behind it until the
-     * cap pushed it out (F6 of P2-4).
+     * Whether a status says the receiver refuses this payload itself rather than every
+     * payload: 400, 413 and 422. The outbox drain skips such a payload instead of stopping
+     * behind it, so it cannot hold back what was queued after it (F6 of P2-4); it stays queued
+     * for a week, since a bug on the receiving side can answer 400 too (see [PendingDrainer]).
      *
-     * Every other refusal is about the receiver's setup, not the payload: a wrong or missing
-     * key (401, 403, 407), or a webhook that is gone or switched off (404, 405, 410, which is
-     * what n8n answers for an inactive workflow). A correction makes the same payload welcome
-     * again, and the drain posts with the current settings, so those stay queued, as do the
-     * transient errors.
+     * Every other refusal is about the receiver's setup and would refuse the next payload the
+     * same way: a wrong or missing key (401, 403, 407), or a webhook that is gone or switched
+     * off (404, 405, 410, which is what n8n answers for an inactive workflow). The drain stops
+     * at those like at an outage, and a correction in the settings delivers the whole queue.
      */
     fun refusesPayload(statusCode: Int?): Boolean = statusCode == 400 || statusCode == 413 || statusCode == 422
 
