@@ -6,8 +6,8 @@
 The exit code of `adb shell am instrument` says nothing: it is 0 when tests fail and when the
 app crashes. What happened is only in the status lines, so they are parsed here. Status codes
 (android.app.Instrumentation / AndroidJUnitRunner): 1 start, 0 ok, -1 error, -2 failure,
--3 ignored, -4 assumption failure. A run without an INSTRUMENTATION_CODE line, or with a
-shortMsg (a crash), counts as an error; so does a run of zero tests.
+-3 ignored, -4 assumption failure. A run without an INSTRUMENTATION_CODE line after its last
+test, or with a shortMsg there (a crash), counts as an error; so does a run of zero tests.
 
 With --summary, a Markdown table of the outcome is appended to that file, for
 $GITHUB_STEP_SUMMARY in CI and the terminal locally.
@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 
 
 def parse(lines):
-    tests, cur, key, result_lines = [], {}, None, []
+    tests, cur, key, result_lines, in_stream = [], {}, None, [], False
     for raw in lines:
         line = raw.rstrip("\r\n")
         if line.startswith("INSTRUMENTATION_STATUS: "):
@@ -29,9 +29,18 @@ def parse(lines):
             if code != 1:  # 1 = test started, the rest close it
                 tests.append({"class": cur.get("class"), "name": cur.get("test"), "code": code, "stack": cur.get("stack", "")})
             cur, key = {}, None
+            # Only the result after the last test says how the run ended. Result lines before
+            # it are text inside a test's own output, such as a nested instrumentation that a
+            # failure message quotes, not the end of this run.
+            result_lines = []
         elif line.startswith("INSTRUMENTATION_RESULT: ") or line.startswith("INSTRUMENTATION_CODE: "):
+            if in_stream and not line.startswith("INSTRUMENTATION_CODE: "):
+                continue  # quoted in the runner's report, which repeats every failure
             result_lines.append(line)
             key = None
+            # The runner's report (Time, the failures with their messages) runs until the
+            # closing code; nothing in it is a result line of this run.
+            in_stream = line.startswith("INSTRUMENTATION_RESULT: stream=")
         elif key is not None:
             cur[key] = cur.get(key, "") + "\n" + line  # multi-line values (stack, stream)
     return tests, result_lines

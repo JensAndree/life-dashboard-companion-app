@@ -207,6 +207,7 @@ if ! connack "$MQTT_HOST_PORT"; then
 fi
 
 old_policy=""
+screen_prepared=0
 cleanup() {
     set +e
     "$ADB" -s "$SERIAL" reverse --remove tcp:1883 >/dev/null 2>&1
@@ -216,6 +217,10 @@ cleanup() {
         else
             "$ADB" -s "$SERIAL" shell settings put global hidden_api_policy "$old_policy" >/dev/null 2>&1
         fi
+    fi
+    if [ $screen_prepared -eq 1 ]; then
+        "$ADB" -s "$SERIAL" shell svc power stayon false >/dev/null 2>&1
+        "$ADB" -s "$SERIAL" shell locksettings set-disabled false >/dev/null 2>&1
     fi
     [ $started_broker -eq 1 ] && docker stop "$MQTT_CONTAINER" >/dev/null 2>&1
 }
@@ -255,6 +260,39 @@ install hc-fixture/build/outputs/apk/androidTest/debug/hc-fixture-debug-androidT
 # Screen time and the failure notification; Health Connect is granted by the tests themselves.
 adb shell appops set "$APP_ID" android:get_usage_stats allow
 adb shell pm grant "$APP_ID" android.permission.POST_NOTIFICATIONS
+
+# The screen stays on and unlocked for the whole run. A fresh emulator boots to the lock
+# screen, and screen time only counts an app that is really in front: behind the keyguard the
+# Settings app that ScreenTimeUse opens never gets its minute (the first CI run, where the AVD
+# is new every time). Put back at the end.
+screen_prepared=1
+adb shell svc power stayon true
+adb shell locksettings set-disabled true >/dev/null 2>&1 || true
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell wm dismiss-keyguard
+
+# The fixture grants itself Health Connect access in an instrumentation of its own, where it
+# has UiAutomation. Inside the suite it cannot: ForeignSourceTest starts it nested, and a
+# nested instrumentation has none, so on a fresh emulator it had no way in.
+#
+# Then a write proves the access, by clearing what the fixture wrote before (a stopped run can
+# leave records). A reinstalled fixture whose old records Health Connect kept is refused writes
+# after its first grant, although the permissions show as granted; revoking one and granting
+# it again settles that, so the script does that once before giving up.
+fixture_run() {
+    adb shell am instrument -w --no-hidden-api-checks -e class "$APP_ID.fixture.$1" \
+        "$APP_ID.fixture.test/androidx.test.runner.AndroidJUnitRunner" 2>&1
+}
+fixture_ready() {
+    fixture_run GrantForSuite > "$OUT/fixture-prepare.txt"
+    grep -q 'OK (1 test)' "$OUT/fixture-prepare.txt" || return 1
+    fixture_run ClearFixtureData >> "$OUT/fixture-prepare.txt"
+    [ "$(grep -c 'OK (1 test)' "$OUT/fixture-prepare.txt")" -eq 2 ]
+}
+if ! fixture_ready; then
+    adb shell pm revoke "$APP_ID.fixture" android.permission.health.WRITE_STEPS >/dev/null 2>&1
+    fixture_ready || die "the fixture could not get Health Connect access; see $OUT/fixture-prepare.txt"
+fi
 
 # --- Run ----------------------------------------------------------------------------------------
 summary="$OUT/summary.md"
