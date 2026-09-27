@@ -263,4 +263,70 @@ class DeletionTrackingTest {
 
         assertEquals(summary, restored)
     }
+
+    // A record deleted and written again under the same id (issues #71, #72)
+
+    @Test
+    fun aDeletionOnAPageThatAlsoWroteTheIdDoesNotStand() {
+        // Health Connect lists a page's writes first, whatever happened first; the write is the
+        // record as it is now, so it exists.
+        assertEquals(emptyList<String>(), DeletionTracking.standingDeletions(listOf(FeedPage(setOf("night"), listOf("night")))))
+    }
+
+    @Test
+    fun aWriteOnALaterPageCancelsTheDeletion() {
+        val pages = listOf(FeedPage(emptySet(), listOf("night")), FeedPage(setOf("night"), emptyList()))
+        assertEquals(emptyList<String>(), DeletionTracking.standingDeletions(pages))
+    }
+
+    @Test
+    fun aWriteOnAnEarlierPageDoesNotCancelALaterDeletion() {
+        // The record existed when page one was read and was deleted while the feed was read.
+        val pages = listOf(FeedPage(setOf("night"), emptyList()), FeedPage(emptySet(), listOf("night")))
+        assertEquals(listOf("night"), DeletionTracking.standingDeletions(pages))
+    }
+
+    @Test
+    fun aGenuineDeletionStandsAndIsNamedOnce() {
+        val pages = listOf(FeedPage(setOf("other"), listOf("gone", "gone")), FeedPage(emptySet(), listOf("also-gone")))
+        assertEquals(listOf("gone", "also-gone"), DeletionTracking.standingDeletions(pages))
+    }
+
+    @Test
+    fun aStoredDeletionOfARecordWrittenAgainIsDropped() {
+        val stored = DeletionSummary(
+            deleted = listOf(deletion("sleep", "night"), deletion("sleep", "gone"), deletion("weight", "night")),
+            expiredTypes = listOf("sleep")
+        )
+        val pruned = stored.without(mapOf("sleep" to setOf("night")))
+        assertEquals(listOf(deletion("sleep", "gone"), deletion("weight", "night")), pruned.deleted)
+        assertEquals("fields about a type stay", listOf("sleep"), pruned.expiredTypes)
+        assertEquals(stored, stored.without(mapOf("sleep" to emptySet())))
+    }
+
+    @Test
+    fun aPayloadNeverCarriesARecordAndItsDeletion() {
+        val pending = DeletionSummary(
+            deleted = listOf(deletion("heart_rate", "hr-1"), deletion("sleep", "night"), deletion("sleep", "gone"), deletion("steps", "old")),
+            expiredTypes = listOf("weight")
+        )
+        val (now, later) = pending.split(mapOf("sleep" to setOf("night")), holdTypes = setOf("heart_rate"))
+        assertEquals(listOf(deletion("sleep", "gone"), deletion("steps", "old")), now.deleted)
+        assertEquals(listOf("weight"), now.expiredTypes)
+        assertEquals("a type still reading its backlog waits", listOf(deletion("heart_rate", "hr-1")), later.deleted)
+        assertTrue(later.expiredTypes.isEmpty())
+    }
+
+    @Test
+    fun recordIdsNameTheRecordNotTheSample() {
+        val data = HealthData(
+            heartRate = listOf(
+                HeartRateData(60, java.time.Instant.EPOCH, uuid = "hr-1#1000"),
+                HeartRateData(61, java.time.Instant.EPOCH, uuid = "hr-1#2000")
+            ),
+            sleep = listOf(SleepData(java.time.Instant.EPOCH, java.time.Duration.ZERO, emptyList(), uuid = "night"))
+        )
+        assertEquals(mapOf("heart_rate" to setOf("hr-1"), "sleep" to setOf("night")), DeletionTracking.recordIds(data))
+        assertFalse(DeletionTracking.recordIds(HealthData()).isNotEmpty())
+    }
 }

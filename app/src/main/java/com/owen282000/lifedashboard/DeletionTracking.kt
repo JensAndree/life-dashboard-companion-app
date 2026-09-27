@@ -45,8 +45,20 @@ data class ChangesResult(
     val expired: Boolean = false,
     val error: String? = null,
     /** Records the feed reported as written or edited before the range the sync reads, see [OutsideWindow]. */
-    val outsideWindow: OutsideWindow? = null
+    val outsideWindow: OutsideWindow? = null,
+    /**
+     * Every id the feed reported as written, as the record was when its page was read: proof
+     * that the record existed then. A deletion stored from an earlier sync for one of these ids
+     * is stale, see [DeletionSummary.without] (issues #71, #72).
+     */
+    val upserted: Set<String> = emptySet()
 )
+
+/**
+ * One page of a type's changes feed, as [DeletionTracking.standingDeletions] reads it: the ids
+ * the page reported as written and the ids it reported as deleted.
+ */
+data class FeedPage(val upserted: Set<String>, val deleted: List<String>)
 
 /**
  * What one sync found across every enabled type: the deletions to publish, the types whose
@@ -84,6 +96,28 @@ data class DeletionSummary(
                 listOfNotNull(outsideWindow[type], other.outsideWindow[type]).reduce(OutsideWindow::plus)
             }
         )
+    }
+
+    /**
+     * This summary without the deletions of [ids], per payload key: records that exist after
+     * all. The other fields stay, since they say something about a type, not about a record.
+     */
+    fun without(ids: Map<String, Set<String>>): DeletionSummary {
+        if (ids.values.all { it.isEmpty() }) return this
+        return copy(deleted = deleted.filterNot { it.uuid in ids[it.type].orEmpty() })
+    }
+
+    /**
+     * What a payload can carry now, and what has to wait. A deletion of a record that goes out
+     * in the same payload is dropped: the record exists, it was read after the deletion was. A
+     * deletion for a type in [holdTypes] waits, because that type's backlog is still being read
+     * and the record may come back in a later pass. [delivered] is per payload key, see
+     * [DeletionTracking.recordIds]. The fields about types always go out.
+     */
+    fun split(delivered: Map<String, Set<String>>, holdTypes: Set<String>): Pair<DeletionSummary, DeletionSummary> {
+        val live = without(delivered)
+        val (held, send) = live.deleted.partition { it.type in holdTypes }
+        return live.copy(deleted = send) to DeletionSummary(deleted = held)
     }
 
     companion object {
@@ -267,4 +301,71 @@ object DeletionTracking {
     /** Everything [results] hands a payload: deletions, the types that cannot vouch for theirs, and what the read could not see. */
     fun summary(results: Map<HealthDataType, ChangesResult>): DeletionSummary =
         DeletionSummary(merge(results), expiredTypes(results), outsideWindow(results))
+
+    /**
+     * The deletions of one read of a type's changes feed that still stand, from its [pages] in
+     * the order they came (issues #71 and #72).
+     *
+     * A source that sets a client record id, as Fitbit does, gets the same record id back
+     * when it deletes a record and writes it again: Health Connect derives the id from the
+     * package and the client record id. The feed then reports that id as deleted and as
+     * written. Within a page the order says nothing, because Health Connect lists a page's
+     * writes before its deletions whatever happened first, but a write is reported as the
+     * record is when the page is read, so a deleted record yields none. A deletion therefore
+     * stands unless the same id was reported written on its own page or a later one. A write
+     * on an earlier page means the record was deleted while the feed was being read, and the
+     * deletion stands.
+     */
+    fun standingDeletions(pages: List<FeedPage>): List<String> {
+        val lastWritten = mutableMapOf<String, Int>()
+        pages.forEachIndexed { index, page -> page.upserted.forEach { lastWritten[it] = index } }
+        return pages.flatMapIndexed { index, page ->
+            page.deleted.filter { id -> (lastWritten[id] ?: -1) < index }
+        }.distinct()
+    }
+
+    /**
+     * The ids of every record in [data], per payload key, as Health Connect knows them: heart
+     * rate and skin temperature samples go out as "record id#epoch millis", and a deletion
+     * names the record. Taken from the records read, not the payload, so records that went
+     * into a bucket count too.
+     */
+    fun recordIds(data: HealthData): Map<String, Set<String>> {
+        fun ids(list: List<String?>) = list.mapNotNull { it?.substringBefore('#') }.toSet()
+        return mapOf(
+            HealthDataType.STEPS to ids(data.steps.map { it.uuid }),
+            HealthDataType.SLEEP to ids(data.sleep.map { it.uuid }),
+            HealthDataType.HEART_RATE to ids(data.heartRate.map { it.uuid }),
+            HealthDataType.DISTANCE to ids(data.distance.map { it.uuid }),
+            HealthDataType.ACTIVE_CALORIES to ids(data.activeCalories.map { it.uuid }),
+            HealthDataType.TOTAL_CALORIES to ids(data.totalCalories.map { it.uuid }),
+            HealthDataType.WEIGHT to ids(data.weight.map { it.uuid }),
+            HealthDataType.HEIGHT to ids(data.height.map { it.uuid }),
+            HealthDataType.BLOOD_PRESSURE to ids(data.bloodPressure.map { it.uuid }),
+            HealthDataType.BLOOD_GLUCOSE to ids(data.bloodGlucose.map { it.uuid }),
+            HealthDataType.OXYGEN_SATURATION to ids(data.oxygenSaturation.map { it.uuid }),
+            HealthDataType.BODY_TEMPERATURE to ids(data.bodyTemperature.map { it.uuid }),
+            HealthDataType.RESPIRATORY_RATE to ids(data.respiratoryRate.map { it.uuid }),
+            HealthDataType.RESTING_HEART_RATE to ids(data.restingHeartRate.map { it.uuid }),
+            HealthDataType.EXERCISE to ids(data.exercise.map { it.uuid }),
+            HealthDataType.HYDRATION to ids(data.hydration.map { it.uuid }),
+            HealthDataType.NUTRITION to ids(data.nutrition.map { it.uuid }),
+            HealthDataType.MINDFULNESS to ids(data.mindfulness.map { it.uuid }),
+            HealthDataType.BODY_FAT to ids(data.bodyFat.map { it.uuid }),
+            HealthDataType.LEAN_BODY_MASS to ids(data.leanBodyMass.map { it.uuid }),
+            HealthDataType.BONE_MASS to ids(data.boneMass.map { it.uuid }),
+            HealthDataType.BODY_WATER_MASS to ids(data.bodyWaterMass.map { it.uuid }),
+            HealthDataType.HEART_RATE_VARIABILITY to ids(data.hrv.map { it.uuid }),
+            HealthDataType.MENSTRUATION_PERIOD to ids(data.menstruationPeriod.map { it.uuid }),
+            HealthDataType.MENSTRUATION_FLOW to ids(data.menstruationFlow.map { it.uuid }),
+            HealthDataType.BASAL_METABOLIC_RATE to ids(data.basalMetabolicRate.map { it.uuid }),
+            HealthDataType.VO2_MAX to ids(data.vo2Max.map { it.uuid }),
+            HealthDataType.SKIN_TEMPERATURE to ids(data.skinTemperature.map { it.uuid }),
+            HealthDataType.BASAL_BODY_TEMPERATURE to ids(data.basalBodyTemperature.map { it.uuid }),
+            HealthDataType.INTERMENSTRUAL_BLEEDING to ids(data.intermenstrualBleeding.map { it.uuid }),
+            HealthDataType.OVULATION_TEST to ids(data.ovulationTest.map { it.uuid }),
+            HealthDataType.CERVICAL_MUCUS to ids(data.cervicalMucus.map { it.uuid }),
+            HealthDataType.SEXUAL_ACTIVITY to ids(data.sexualActivity.map { it.uuid })
+        ).filterValues { it.isNotEmpty() }.mapKeys { payloadKey(it.key) }
+    }
 }

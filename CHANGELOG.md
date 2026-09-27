@@ -11,6 +11,14 @@ All notable changes to this project are documented in this file. The format is b
 - Two log rows written at the same moment, for example by a Health Connect sync and a Screen
   Time sync, could lose one of them, and sometimes the stored payload of the other. The
   Logs tab now keeps every row.
+- A night of sleep or a day of calories that Fitbit revised could disappear from a receiver
+  ([#71](https://github.com/owen282000/life-dashboard-companion-app/issues/71),
+  [#72](https://github.com/owen282000/life-dashboard-companion-app/issues/72)). Fitbit
+  revises by deleting records and writing them again, and Health Connect gives the new
+  records their old ids, so the app sent the revised records and also named them in
+  `deleted_records`. A record that exists again is no longer named deleted: not when Health
+  Connect reports it written again, not when the same payload carries it, and not when a
+  deletion stored from an earlier sync turns out to be stale.
 
 ## [1.21.0] - 2026-09-27
 

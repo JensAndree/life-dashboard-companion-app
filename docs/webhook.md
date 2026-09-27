@@ -301,6 +301,8 @@ From 1.18.0 the app follows Health Connect's own change tracking and names the r
 
 `type` is the payload key the record arrived under, so a receiver drops that `uuid` from that collection. The field is absent when nothing was deleted, and deletions ride along on the first payload of a sync.
 
+A `uuid` in `deleted_records` means the record was gone when the app read Health Connect's change feed, not that the id is retired. A source that revises by deleting a record and writing it again under its own client record id, as Fitbit does with sleep and calories, gets the same `uuid` back, so the same `uuid` can arrive again later as a record; store it again. From the release after 1.21.0 the app never names a record as deleted that exists again, and never sends a `uuid` as a record and as a deletion in one payload. Versions 1.18.0 to 1.21.0 could do both (issues #71 and #72). For their payloads, apply `deleted_records` before the records of the same payload, and let a record that arrives in a later payload restore a `uuid` that was deleted. Heart rate and skin temperature samples arrive as `<record uuid>#<epoch millis>` while a deletion names the record, so drop every sample whose `uuid` starts with that `uuid` followed by `#`.
+
 Two limits are worth building around:
 
 - **Tracking starts when the app first syncs a type**, so deletions from before that were never observable.

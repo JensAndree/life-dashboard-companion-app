@@ -724,7 +724,8 @@ class HealthConnectManager(
      *
      * A deletion leaves no record behind, so a read can never see it; only the changes API
      * reports one, by the id of the record that is gone. Upsertions are not sent from here: the
-     * normal read carries them. Only the ones timestamped before [readFrom], where that read's
+     * normal read carries them. They do decide which deletions stand: a record deleted and
+     * written again under the same id exists, see [DeletionTracking.standingDeletions]. Only the ones timestamped before [readFrom], where that read's
      * range starts, are counted into [ChangesResult.outsideWindow], because the read never sees
      * them (see [OutsideWindow]).
      *
@@ -756,7 +757,7 @@ class HealthConnectManager(
                 return ChangesResult(nextToken = healthConnectClient.getChangesToken(request))
             }
 
-            val deleted = mutableListOf<DeletedRecord>()
+            val pages = mutableListOf<FeedPage>()
             var outside: OutsideWindow? = null
             var token: String = storedToken
             var expired = false
@@ -771,11 +772,12 @@ class HealthConnectManager(
                     token = healthConnectClient.getChangesToken(request)
                     break
                 }
-                response.changes.filterIsInstance<DeletionChange>().forEach { change ->
-                    if (change.recordId !in ownRecordIds) {
-                        deleted += DeletedRecord(DeletionTracking.payloadKey(type), change.recordId)
-                    }
-                }
+                // A record Fitbit deletes and writes again keeps its id, so the page can report
+                // it as both; see DeletionTracking.standingDeletions (issues #71, #72).
+                pages += FeedPage(
+                    upserted = response.changes.filterIsInstance<UpsertionChange>().map { it.record.metadata.id }.toSet(),
+                    deleted = response.changes.filterIsInstance<DeletionChange>().map { it.recordId }.filter { it !in ownRecordIds }
+                )
                 if (readFrom != null) {
                     val times = response.changes.filterIsInstance<UpsertionChange>()
                         .map { it.record }
@@ -792,7 +794,8 @@ class HealthConnectManager(
                 if (page == MAX_CHANGES_PAGES) unread = true
             }
             ChangesResult(
-                deleted = deleted,
+                deleted = DeletionTracking.standingDeletions(pages).map { DeletedRecord(DeletionTracking.payloadKey(type), it) },
+                upserted = pages.flatMap { it.upserted }.toSet(),
                 nextToken = token,
                 // Both mean the same thing to a receiver: deletions exist for this type that
                 // the app cannot name, so reconcile it against a backfill window instead.

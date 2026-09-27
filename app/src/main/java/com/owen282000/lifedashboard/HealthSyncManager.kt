@@ -157,9 +157,21 @@ class HealthSyncManager(
             // the enabled types; the sync then reports a failure instead of "no new data".
             var healthConnectSilent = false
 
+            // Read the feed first and storage after: reading the feed prunes stored deletions of
+            // records written again since, and storage read before it would put them back.
+            // Storage then holds what every type that moved its token found, so only the types
+            // whose feed could not be read are added from the result; adding the rest again
+            // would count records_outside_window twice, since those counts add up.
+            val freshDeletions = readDeletions(enabledTypes, preferencesManager.getWriteBackLedger().ownRecordIds)
             var pendingDeletions = preferencesManager.getPendingDeletions()
-                .merge(readDeletions(enabledTypes, preferencesManager.getWriteBackLedger().ownRecordIds))
+                .merge(DeletionSummary(expiredTypes = freshDeletions.expiredTypes))
             preferencesManager.setPendingDeletions(pendingDeletions)
+            // Types whose backlog the last pass did not finish: a deletion for one of those waits,
+            // because the record may still come back in a pass that has not been read.
+            var stillCapped = emptySet<String>()
+            // Every record id this sync read, per payload key, also those that went into an open
+            // bucket without a payload: none of them may go out as deleted (issues #71, #72).
+            val readIds = mutableMapOf<String, Set<String>>()
 
             for (pass in 1..MAX_SYNC_PASSES) {
                 // Re-read watermarks each pass; the previous pass advanced them. The range each
@@ -178,6 +190,8 @@ class HealthSyncManager(
                     )
                 }
                 val healthData = healthDataResult.getOrThrow()
+                stillCapped = healthData.cappedTypes.map { DeletionTracking.payloadKey(it) }.toSet()
+                DeletionTracking.recordIds(healthData).forEach { (key, ids) -> readIds[key] = readIds[key].orEmpty() + ids }
                 if (isHealthDataEmpty(healthData)) {
                     healthConnectSilent = !anyData && enabledTypes.isNotEmpty() && healthData.unreadTypes.containsAll(enabledTypes)
                     // An empty batch can still carry watermarks: when the only new records were
@@ -238,18 +252,23 @@ class HealthSyncManager(
                     continue
                 }
 
+                // A deletion of a record this payload carries is dropped: the record was read after
+                // the deletion was, so it exists again under the same id (issues #71, #72). A
+                // deletion for a type still working through a backlog waits for the pass that
+                // finishes it, for the same reason.
+                val (deletionsNow, deletionsLater) = pendingDeletions.split(readIds, stillCapped)
                 val jsonPayload = buildJsonPayload(
                     healthData,
                     dailyTotals = dailyTotals,
                     resolved = resolved,
-                    deletions = pendingDeletions,
+                    deletions = deletionsNow,
                     sequence = preferencesManager.nextHealthSyncSequence()
                 )
                 // Held by this payload now, so a later pass of this same sync must not repeat
-                // them. Storage is only cleared once the payload is somewhere durable, below:
+                // them. Storage keeps the rest once the payload is somewhere durable, below:
                 // a throw from the post would otherwise leave them in neither the webhook, the
                 // outbox, nor the feed they came from, which cannot be read twice.
-                pendingDeletions = DeletionSummary.EMPTY
+                pendingDeletions = deletionsLater
 
                 val sourcePost = writeBack.sourcePost(jsonPayload)
                 val webhookManager = WebhookManager(
@@ -297,12 +316,12 @@ class HealthSyncManager(
                         nowMillis = System.currentTimeMillis()
                     )
                     // On disk in the outbox now, so it will be delivered by a later drain.
-                    preferencesManager.setPendingDeletions(DeletionSummary.EMPTY)
+                    preferencesManager.setPendingDeletions(pendingDeletions)
                     queuedRecords = totalRecords
                     break
                 }
                 // Delivered.
-                preferencesManager.setPendingDeletions(DeletionSummary.EMPTY)
+                preferencesManager.setPendingDeletions(pendingDeletions)
 
                 if (healthData.cappedTypes.isEmpty()) break
             }
@@ -314,13 +333,15 @@ class HealthSyncManager(
             // own, carrying no records. So do records the read could not see (OutsideWindow),
             // which may be all that a watch uploaded after a long time away.
             var deletionsDelivered = false
-            if (!pendingDeletions.isEmpty && webhookUrls.isNotEmpty()) {
+            // Deletions for a type whose backlog is still open stay in storage for the next sync.
+            val (deletionsNow, deletionsLater) = pendingDeletions.split(readIds, stillCapped)
+            if (!deletionsNow.isEmpty && webhookUrls.isNotEmpty()) {
                 val deletionPayload = buildJsonPayload(
                     EMPTY_HEALTH_DATA,
-                    deletions = pendingDeletions,
+                    deletions = deletionsNow,
                     sequence = preferencesManager.nextHealthSyncSequence()
                 )
-                pendingDeletions = DeletionSummary.EMPTY
+                pendingDeletions = deletionsLater
 
                 val sourcePost = writeBack.sourcePost(deletionPayload)
                 val webhookManager = WebhookManager(
@@ -359,7 +380,7 @@ class HealthSyncManager(
                     // already record that the delivery failed.
                 }
                 // Durable either way now: delivered, or on disk in the outbox.
-                preferencesManager.setPendingDeletions(DeletionSummary.EMPTY)
+                preferencesManager.setPendingDeletions(deletionsLater)
                 deletionsDelivered = true
             }
 
@@ -697,10 +718,16 @@ class HealthSyncManager(
             // read into storage: the feed behind the old token is gone once the new one is
             // stored, so a worker stopped at a later type would otherwise lose these deletions
             // for good, without naming the type in deletions_unavailable either.
+            //
+            // A deletion stored by an earlier sync is dropped when the feed now reports the same
+            // id written: the source wrote the record again under its old id, as Fitbit does
+            // when it revises a night or a day of calories, and it exists (issues #71, #72).
             if (result.nextToken != null) {
                 val part = mapOf(type to results.getValue(type))
                 val found = DeletionTracking.summary(part)
-                if (!found.isEmpty) preferencesManager.setPendingDeletions(preferencesManager.getPendingDeletions().merge(found))
+                val stored = preferencesManager.getPendingDeletions()
+                val next = stored.without(mapOf(DeletionTracking.payloadKey(type) to result.upserted)).merge(found)
+                if (next != stored) preferencesManager.setPendingDeletions(next)
                 preferencesManager.setHealthChangesToken(type, result.nextToken, now)
             }
         }
