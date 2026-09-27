@@ -174,4 +174,17 @@ class ScreenTimeSessionsTest {
         assertEquals("example", ScreenTimeManager.fallbackAppName("com.example"))
         assertEquals("com.android.app", ScreenTimeManager.fallbackAppName("com.android.app"))
     }
+
+    @Test
+    fun settingsIsNoLauncherAlthoughItAnswersHome() {
+        val home = listOf(
+            "com.google.android.apps.nexuslauncher" to "com.google.android.apps.nexuslauncher.NexusLauncherActivity",
+            "com.android.settings" to "com.android.settings.FallbackHome",
+            "com.sec.android.app.launcher" to "com.sec.android.app.launcher.activities.LauncherActivity"
+        )
+        assertEquals(
+            setOf("com.google.android.apps.nexuslauncher", "com.sec.android.app.launcher"),
+            ScreenTimeSessions.launcherPackages(home)
+        )
+    }
 }

@@ -31,6 +31,15 @@ object ScreenTimeSessions {
     /** Packages that are never reported, matching what Digital Wellbeing hides. */
     const val SYSTEM_UI_PACKAGE = "com.android.systemui"
 
+    /**
+     * The launchers among the activities that answer the HOME intent, given as package and
+     * activity name. Settings answers it too, with FallbackHome, the screen Android shows
+     * before the phone is unlocked after a restart; counting that as a launcher hid every
+     * minute spent in Settings. It is left out, and so is every other FallbackHome.
+     */
+    fun launcherPackages(homeActivities: List<Pair<String, String>>): Set<String> =
+        homeActivities.filterNot { (_, activity) -> activity.endsWith(".FallbackHome") }.map { it.first }.toSet()
+
     fun aggregate(
         events: List<UsageEventSnapshot>,
         dayStartMs: Long,

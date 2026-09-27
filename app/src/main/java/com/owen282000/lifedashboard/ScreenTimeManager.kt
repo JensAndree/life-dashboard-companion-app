@@ -51,11 +51,11 @@ class ScreenTimeManager(
             } else {
                 @Suppress("DEPRECATION")
                 packageManager.queryIntentActivities(home, PackageManager.MATCH_DEFAULT_ONLY)
-            }.map { it.activityInfo.packageName }
+            }.map { it.activityInfo.packageName to it.activityInfo.name }
         } catch (e: Exception) {
             emptyList()
         }
-        (launchers + ScreenTimeSessions.SYSTEM_UI_PACKAGE).toSet()
+        ScreenTimeSessions.launcherPackages(launchers) + ScreenTimeSessions.SYSTEM_UI_PACKAGE
     }
 
     /**

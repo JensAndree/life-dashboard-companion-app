@@ -49,6 +49,9 @@ All notable changes to this project are documented in this file. The format is b
   with a message, and a rerun sends the window again.
 - A sync in which Health Connect answered for no data type at all reported "no new data". It
   now reports the failure, and a run of them raises the failure notification.
+- Time spent in the Settings app never counted as screen time. The app leaves launchers out,
+  as Digital Wellbeing does, and Settings answers the same request as a launcher for the
+  screen Android shows before the phone is unlocked after a restart.
 
 ## [1.20.0] - 2026-09-26
 
