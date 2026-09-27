@@ -24,6 +24,11 @@ All notable changes to this project are documented in this file. The format is b
 - After an outage, a sync that only delivered what had been queued left the failure
   notification, the red status and the old "Last sync" in place, although the data had
   arrived. Delivering queued data now counts as a successful sync.
+- A payload the webhook refused for good sat at the front of the outbox and held back every
+  delivery after it until 50 more had failed. A refusal of the payload itself (HTTP 400, 413
+  or 422) is now dropped with a log row that says so, and the sync reports it. A wrong key or
+  a webhook that is missing (401, 403, 404) still keeps the data queued until the settings are
+  fixed.
 
 ## [1.20.0] - 2026-09-26
 

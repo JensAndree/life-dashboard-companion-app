@@ -49,6 +49,15 @@ class WebhookSupportTest {
         assertFalse(WebhookSupport.isRetryable(410))
     }
 
+    @Test
+    fun onlyRefusalsOfThePayloadItselfAreDropped() {
+        listOf(400, 413, 422).forEach { assertTrue("$it", WebhookSupport.refusesPayload(it)) }
+        // Setup errors a correction can fix, and transient ones, stay queued.
+        listOf(null, 401, 403, 404, 405, 407, 408, 410, 429, 500, 503).forEach {
+            assertFalse("$it", WebhookSupport.refusesPayload(it))
+        }
+    }
+
     // Plain HTTP opt-in (issue #51)
 
     @Test

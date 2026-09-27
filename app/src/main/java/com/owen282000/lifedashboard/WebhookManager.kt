@@ -33,6 +33,18 @@ class SourceResponse(
 /** The outcome of a delivery: success is the Result itself; this carries what the source URL said, if asked. */
 data class WebhookOutcome(val sourceResponse: SourceResponse? = null)
 
+/**
+ * The failure of a delivery that every webhook refused for good, see [WebhookSupport.refusesPayload].
+ * The payload is dropped instead of queued: it would never be accepted, and in the outbox it
+ * would block everything behind it.
+ */
+class PayloadRefusedException(val statusCode: Int) :
+    IOException("The webhook refused this data for good (HTTP $statusCode), so it is not retried. The webhook logs have the details.")
+
+/** One URL's refusal, logged by [WebhookManager.postData] once it knows whether the payload is dropped. */
+private class UrlRefusal(val url: String, val timestamp: Long, val statusCode: Int, val errorMessage: String) :
+    IOException(errorMessage)
+
 class WebhookManager(
     private val webhookUrls: List<String>,
     private val context: Context? = null,
@@ -100,6 +112,7 @@ class WebhookManager(
         var anySuccess = false
         var lastFailure: Exception? = null
         var sourceResponse: SourceResponse? = null
+        val refusals = mutableListOf<UrlRefusal>()
 
         for (url in webhookUrls) {
             val isSource = source != null && url == source.url
@@ -108,8 +121,21 @@ class WebhookManager(
                 anySuccess = true
                 if (isSource) sourceResponse = result.getOrNull()
             } else {
-                lastFailure = result.exceptionOrNull() as? Exception ?: Exception("Unknown error")
+                val failure = result.exceptionOrNull() as? Exception ?: Exception("Unknown error")
+                if (failure is UrlRefusal) refusals += failure else lastFailure = failure
             }
+        }
+
+        // Dropped only when no URL can still take it: with one URL down and another refusing,
+        // the payload is queued and the refusing URL sees it again on the drain.
+        val dropped = !anySuccess && lastFailure == null && refusals.isNotEmpty()
+        refusals.forEach { refusal ->
+            val consequence = if (dropped) "the receiver refused this payload, so it is dropped rather than queued for retry"
+                              else "not retried"
+            logWebhookCall(refusal.url, refusal.timestamp, refusal.statusCode, false, "${refusal.errorMessage} (permanent error, $consequence)", jsonPayload)
+        }
+        if (dropped) {
+            return@withContext Result.failure<WebhookOutcome>(PayloadRefusedException(refusals.last().statusCode))
         }
 
         if (anySuccess) {
@@ -170,6 +196,10 @@ class WebhookManager(
                     // Client errors (401, 404, ...) will not change on retry; fail fast so the
                     // sync is not delayed by pointless backoff.
                     if (!WebhookSupport.isRetryable(statusCode)) {
+                        val code = statusCode
+                        if (code != null && WebhookSupport.refusesPayload(code)) {
+                            return Result.failure(UrlRefusal(url, timestamp, code, errorMessage ?: "HTTP $code"))
+                        }
                         logWebhookCall(
                             url, timestamp, statusCode, false,
                             "$errorMessage (permanent error, not retried)", jsonPayload

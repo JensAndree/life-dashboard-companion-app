@@ -62,6 +62,20 @@ object WebhookSupport {
         return statusCode == 408 || statusCode == 429 || statusCode in 500..599
     }
 
+    /**
+     * Whether a status says the receiver refuses this payload itself, so it will never be
+     * accepted however often it is sent: 400, 413 and 422. Such a payload is dropped rather
+     * than queued, because in the outbox it would hold back everything behind it until the
+     * cap pushed it out (F6 of P2-4).
+     *
+     * Every other refusal is about the receiver's setup, not the payload: a wrong or missing
+     * key (401, 403, 407), or a webhook that is gone or switched off (404, 405, 410, which is
+     * what n8n answers for an inactive workflow). A correction makes the same payload welcome
+     * again, and the drain posts with the current settings, so those stay queued, as do the
+     * transient errors.
+     */
+    fun refusesPayload(statusCode: Int?): Boolean = statusCode == 400 || statusCode == 413 || statusCode == 422
+
     const val CLEARTEXT_BLOCKED_MESSAGE =
         "Plain HTTP is blocked. Enable \"Allow plain HTTP webhooks\" in the app for endpoints on a private LAN or VPN, or use HTTPS."
 

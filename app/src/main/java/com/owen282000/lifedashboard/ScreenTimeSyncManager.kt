@@ -117,6 +117,8 @@ class ScreenTimeSyncManager(private val context: Context) {
             // outbox and is guaranteed to be delivered by a later drain.
             preferencesManager.setScreenTimeLastSyncTimestamp(System.currentTimeMillis())
 
+            // Refused for good (F6 of P2-4): not queued, where it would hold back what follows.
+            postResult.exceptionOrNull()?.let { if (it is PayloadRefusedException) return@withContext Result.failure(it) }
             if (postResult.isFailure) {
                 PendingSyncStore.forContext(context).enqueue(
                     payload = jsonPayload,

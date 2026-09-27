@@ -133,6 +133,9 @@ class HealthSyncManager(
             val syncCounts = mutableMapOf<HealthDataType, Int>()
             var lastDelivered: HealthData? = null
             var queuedRecords: Int? = null
+            // Set when the webhook refused a payload for good: nothing was queued, and the sync
+            // reports it as failed once the rest of it has run.
+            var refused: PayloadRefusedException? = null
             var anyData = false
             // Samples of bucketed windows still open: carried from the last sync, then from
             // pass to pass, and stored again at the end so a window goes out once, complete.
@@ -269,6 +272,15 @@ class HealthSyncManager(
                 preferencesManager.setBucketCarry(carried)
                 passCounts.forEach { (type, count) -> syncCounts.merge(type, count, Int::plus) }
 
+                val refusal = postResult.exceptionOrNull() as? PayloadRefusedException
+                if (refusal != null) {
+                    // Refused for good (F6 of P2-4): queuing it would only hold back every
+                    // payload after it. The log row says it was dropped; the deletions it
+                    // carried go with it, since sending them again would be refused the same way.
+                    preferencesManager.setPendingDeletions(DeletionSummary.EMPTY)
+                    refused = refusal
+                    break
+                }
                 if (postResult.isFailure) {
                     PendingSyncStore.forContext(context).enqueue(
                         payload = jsonPayload,
@@ -323,7 +335,7 @@ class HealthSyncManager(
                     postedToSource = true
                     receive(writeBack, sourcePost, postResult)
                 }
-                if (postResult.isFailure) {
+                if (postResult.isFailure && postResult.exceptionOrNull() !is PayloadRefusedException) {
                     PendingSyncStore.forContext(context).enqueue(
                         payload = deletionPayload,
                         dataType = "health_connect",
@@ -383,6 +395,7 @@ class HealthSyncManager(
                 MqttPublisher(context).publishHealthData(data, totalsForMqtt)
             }
 
+            refused?.let { return Result.failure(it) }
             queuedRecords?.let {
                 return Result.success(HealthSyncResult.Queued(it))
             }

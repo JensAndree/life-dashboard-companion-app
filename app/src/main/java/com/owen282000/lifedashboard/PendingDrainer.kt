@@ -6,7 +6,8 @@ import android.content.Context
  * Delivers queued outbox payloads using the CURRENT webhook configuration for each category,
  * so config changes made after a failure apply to the retried delivery too. Stops at the
  * first failure to preserve ordering; remaining items wait for the next drain (which runs at
- * the start of every sync).
+ * the start of every sync). A payload the receiver refuses for good is dropped instead, see
+ * [WebhookSupport.refusesPayload].
  */
 object PendingDrainer {
 
@@ -35,7 +36,8 @@ object PendingDrainer {
                                 else preferencesManager.getHealthWebhookSecret()
             )
 
-            if (webhookManager.postData(item.payload).isSuccess) {
+            val result = webhookManager.postData(item.payload)
+            if (result.isSuccess) {
                 store.remove(item.id)
                 // A drained payload is a delivery like any other: it ends the failure streak
                 // and moves "Last sync". Without this, an outage followed by a sync with no
@@ -44,6 +46,10 @@ object PendingDrainer {
                 // now, since the failed attempt that queued it counted none.
                 SyncFailureNotifier.recordResult(context, logType, true)
                 SyncStatusStore.record(context, true, item.recordCount, logType)
+            } else if (result.exceptionOrNull() is PayloadRefusedException) {
+                // Refused for good (F6 of P2-4): it would never be accepted, and holding it
+                // would keep everything behind it waiting. The log row says it was dropped.
+                store.remove(item.id)
             } else {
                 store.recordAttempt(item)
                 break
