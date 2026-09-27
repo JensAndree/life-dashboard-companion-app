@@ -38,6 +38,17 @@ All notable changes to this project are documented in this file. The format is b
   the same modification time, and the limit per sync could not stop inside such a group. The
   sync now also remembers the last record it sent, so every payload stays within the limit
   and the rest follows in the next pass. Nothing is sent twice or skipped across the update.
+- A sync stopped by Android while Receive was still fetching measurements sent the windows of
+  its data resolution again on the next sync. It now stores its progress as soon as the
+  payload is delivered.
+- Deletions read just before Android stopped a sync could be lost: the app had moved on in
+  Health Connect's list of changes without storing them. Each type's deletions are now stored
+  before the app moves on.
+- A backfill window that a data type could not be read for was still marked complete, which
+  tells a receiver to drop that type's records in the window. The backfill now stops there
+  with a message, and a rerun sends the window again.
+- A sync in which Health Connect answered for no data type at all reported "no new data". It
+  now reports the failure, and a run of them raises the failure notification.
 
 ## [1.20.0] - 2026-09-26
 

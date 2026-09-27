@@ -55,6 +55,9 @@ class HealthConnectManager(
     // loop uses this to keep draining the backlog instead of waiting for the next scheduled run.
     private val cappedTypes = mutableSetOf<HealthDataType>()
 
+    // Types that came back empty because they could not be read, see HealthData.unreadTypes.
+    private val unreadTypes = mutableSetOf<HealthDataType>()
+
     /**
      * Reads all enabled types. The default window is the trailing [LOOKBACK_HOURS]; backfill
      * passes an explicit historical window (with empty lastSyncTimestamps so nothing is
@@ -70,6 +73,7 @@ class HealthConnectManager(
             diagnostics.clear()
             watermarks.clear()
             cappedTypes.clear()
+            unreadTypes.clear()
             readStartedAt = System.currentTimeMillis()
             val grantedPermissions = bounded("the granted permissions") { getGrantedPermissions() }
             val endTime = windowEnd ?: Instant.now()
@@ -199,7 +203,8 @@ class HealthConnectManager(
                 sexualActivity = sexualActivityData,
                 diagnostics = diagnostics.toMap(),
                 watermarks = watermarks.toMap(),
-                cappedTypes = cappedTypes.toSet()
+                cappedTypes = cappedTypes.toSet(),
+                unreadTypes = unreadTypes.toSet()
             ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -226,6 +231,7 @@ class HealthConnectManager(
     private suspend fun <T> readType(type: HealthDataType, read: suspend () -> List<T>): List<T> {
         if (System.currentTimeMillis() - readStartedAt >= READ_BUDGET_MS) {
             recordDiag(type = type, error = "skipped: the read step used its budget of ${READ_BUDGET_MS / 1000} s")
+            unreadTypes += type
             return emptyList()
         }
         return try {
@@ -234,6 +240,7 @@ class HealthConnectManager(
             throw e
         } catch (e: Exception) {
             if (diagnostics[type]?.error == null) recordDiag(type = type, error = e.message ?: e.javaClass.simpleName)
+            unreadTypes += type
             emptyList()
         }
     }

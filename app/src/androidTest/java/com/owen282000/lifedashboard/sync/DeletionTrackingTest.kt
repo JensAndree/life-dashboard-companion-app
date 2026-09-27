@@ -5,6 +5,7 @@ import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
+import com.owen282000.lifedashboard.DeletedRecord
 import com.owen282000.lifedashboard.DeletionSummary
 import com.owen282000.lifedashboard.HealthConnectManager
 import com.owen282000.lifedashboard.HealthDataType
@@ -19,6 +20,7 @@ import com.owen282000.lifedashboard.PendingSyncStore
 import com.owen282000.lifedashboard.appPreferences
 import com.owen282000.lifedashboard.harness.AppStateRule
 import com.owen282000.lifedashboard.harness.Conservation
+import com.owen282000.lifedashboard.harness.CountingHealthConnectClient
 import com.owen282000.lifedashboard.harness.HcCall
 import com.owen282000.lifedashboard.harness.HcFixture
 import com.owen282000.lifedashboard.harness.HcFixture.Companion.ago
@@ -30,6 +32,11 @@ import com.owen282000.lifedashboard.harness.Witness
 import com.owen282000.lifedashboard.harness.arr
 import com.owen282000.lifedashboard.harness.num
 import com.owen282000.lifedashboard.harness.strings
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
@@ -199,5 +206,42 @@ class DeletionTrackingTest {
         assertEquals(types.map { it.name.lowercase() }.sorted(), body["deletions_unavailable"].strings())
         types.forEach { assertEquals("token of $it unchanged", tokens[it], prefs.getHealthChangesToken(it) to prefs.getHealthChangesTokenIssuedAt(it)) }
         assertEquals(DeletionSummary.EMPTY, prefs.getPendingDeletions())
+    }
+
+    /**
+     * A worker stopped halfway through the deletion step. A type read before the stop has
+     * moved its token, and the feed behind the old token cannot be read again, so its
+     * deletions must already be in storage. Red before the fix: they were only in memory,
+     * and the stop lost them for good.
+     */
+    @Test
+    fun aStopInTheDeletionStepKeepsWhatItAlreadyRead() = runBlocking {
+        val id = firstSync(setOf(STEPS, WEIGHT))
+        val stepsToken = prefs.getHealthChangesToken(STEPS)
+        val weightToken = prefs.getHealthChangesToken(WEIGHT)
+        fixture.delete(StepsRecord::class, id)
+
+        // Steps is read first; the changes read after it hangs until the sync is stopped.
+        val hung = CompletableDeferred<Unit>()
+        val client = object : CountingHealthConnectClient(HealthConnectClient.getOrCreate(context)) {
+            override suspend fun before(call: HcCall) {
+                super.before(call)
+                if (call == HcCall.GET_CHANGES && prefs.getHealthChangesToken(STEPS) != stepsToken) {
+                    hung.complete(Unit)
+                    awaitCancellation()
+                }
+            }
+        }
+        val sync = launch(Dispatchers.IO) { HealthSyncManager(context, HealthConnectManager(context) { client }).performSync() }
+        withTimeout(20_000) { hung.await() }
+        sync.cancelAndJoin()
+
+        assertTrue("steps moved its token", prefs.getHealthChangesToken(STEPS) != stepsToken)
+        assertEquals("weight kept its token", weightToken, prefs.getHealthChangesToken(WEIGHT))
+        assertEquals(listOf(DeletedRecord("steps", id)), prefs.getPendingDeletions().deleted)
+
+        val mark = receiver.exchanges.size
+        TestSetup.syncManager().performSync().getOrThrow()
+        assertEquals(listOf("steps" to id), receiver.since(mark).flatMap { deleted(Conservation.parse(it.text)) })
     }
 }

@@ -24,9 +24,11 @@ private val EMPTY_HEALTH_DATA = HealthData()
 
 /**
  * Max read+deliver passes per backfill window. Generous: a 3-day window of 5-second heart rate
- * samples is ~52 batches of 1000; the bound only guards against a cursor that stops advancing.
+ * samples is ~52 batches of 1000, and of 1-second samples ~260. The cursor always moves past
+ * what a pass sent, so this only bounds the time; a window that needs more stops the backfill
+ * with an error instead of being cut short in silence.
  */
-private const val MAX_PASSES_PER_BACKFILL_WINDOW = 100
+private const val MAX_PASSES_PER_BACKFILL_WINDOW = 400
 
 /** Serialises [HealthSyncManager.performSync] across every caller in the process. */
 private val SYNC_LOCK = Mutex()
@@ -146,6 +148,10 @@ class HealthSyncManager(
             // handed to the webhook. A sync that finds no records, or whose records all land in
             // open buckets, ends without building a payload at all, and the feed cannot be read
             // twice, so clearing them any earlier would lose them for good (issue #61).
+            // Set when the first read found nothing because Health Connect answered for none of
+            // the enabled types; the sync then reports a failure instead of "no new data".
+            var healthConnectSilent = false
+
             var pendingDeletions = preferencesManager.getPendingDeletions()
                 .merge(readDeletions(enabledTypes, preferencesManager.getWriteBackLedger().ownRecordIds))
             preferencesManager.setPendingDeletions(pendingDeletions)
@@ -163,6 +169,7 @@ class HealthSyncManager(
                 }
                 val healthData = healthDataResult.getOrThrow()
                 if (isHealthDataEmpty(healthData)) {
+                    healthConnectSilent = !anyData && enabledTypes.isNotEmpty() && healthData.unreadTypes.containsAll(enabledTypes)
                     // An empty batch can still carry watermarks: when the only new records were
                     // the app's own (Receive), the read left them out but moved the watermark
                     // past them, and without storing it here they would be read and counted
@@ -248,6 +255,19 @@ class HealthSyncManager(
                 val postResult = webhookManager.postData(jsonPayload)
                 SyncFailureNotifier.recordResult(context, LogType.HEALTH_CONNECT, postResult.isSuccess)
                 SyncStatusStore.record(context, postResult.isSuccess, if (postResult.isSuccess) totalRecords else 0, LogType.HEALTH_CONNECT)
+
+                // Watermarks advance regardless of delivery outcome: a failed payload goes to the
+                // outbox and is guaranteed to be delivered by a later drain, so re-reading (and
+                // potentially double-sending) the same records is unnecessary. The bucket carry
+                // is stored at the same moment, see above. Both are stored the moment the post
+                // returns, before Receive: its follow-ups can take a minute, and a worker stopped
+                // in there would otherwise send this pass's closed windows again next time, which
+                // a receiver that adds up sample counts would count twice.
+                val passCounts = mutableMapOf<HealthDataType, Int>()
+                updateSyncTimestamps(healthData, passCounts)
+                preferencesManager.setBucketCarry(carried)
+                passCounts.forEach { (type, count) -> syncCounts.merge(type, count, Int::plus) }
+
                 // What the integration sent back rides on this same round trip; the outbox
                 // below only ever holds the plain payload, since a drained payload's answer
                 // is never read and the acks it carried stay stored until one is.
@@ -255,15 +275,6 @@ class HealthSyncManager(
                     postedToSource = true
                     receive(writeBack, sourcePost, postResult)
                 }
-
-                // Watermarks advance regardless of delivery outcome: a failed payload goes to the
-                // outbox and is guaranteed to be delivered by a later drain, so re-reading (and
-                // potentially double-sending) the same records is unnecessary. The bucket carry
-                // is stored at the same moment, see above.
-                val passCounts = mutableMapOf<HealthDataType, Int>()
-                updateSyncTimestamps(healthData, passCounts)
-                preferencesManager.setBucketCarry(carried)
-                passCounts.forEach { (type, count) -> syncCounts.merge(type, count, Int::plus) }
 
                 if (postResult.isFailure) {
                     PendingSyncStore.forContext(context).enqueue(
@@ -356,6 +367,12 @@ class HealthSyncManager(
             // A sync that only withdrew records did do something, so it must not report "no new
             // data": the user asked for a sync and one went out.
             if (!anyData && !deletionsDelivered) {
+                if (healthConnectSilent) {
+                    // Nothing was read because nothing could be; a run of these is an outage
+                    // like an unreachable webhook, and the failure notifier treats it as one.
+                    SyncFailureNotifier.recordResult(context, LogType.HEALTH_CONNECT, false)
+                    return Result.failure(Exception("Health Connect did not answer for any data type; the next sync tries again"))
+                }
                 return Result.success(
                     if (writeBack.writtenTotal > 0) HealthSyncResult.Success(emptyMap(), writeBack.writtenTotal)
                     else HealthSyncResult.NoData
@@ -502,8 +519,13 @@ class HealthSyncManager(
                 // the range that the window did not carry (issue #61), so it must never be
                 // claimed on a window that was merely abandoned: running out of passes leaves
                 // records unsent, and saying "complete" there would delete them on the receiver.
-                val drained = healthData.cappedTypes.isEmpty()
-                val isLastChunk = drained || pass == MAX_PASSES_PER_BACKFILL_WINDOW
+                //
+                // A type that could not be read this pass (an error, a call that did not answer,
+                // the read budget) came back empty, which says nothing about what the window
+                // holds for it, so the window cannot be complete either: a receiver would drop
+                // that type's records in the range.
+                val drained = healthData.cappedTypes.isEmpty() && healthData.unreadTypes.isEmpty()
+                val isLastChunk = healthData.cappedTypes.isEmpty() || pass == MAX_PASSES_PER_BACKFILL_WINDOW
                 val payload = buildJsonPayload(
                     healthData,
                     // In every chunk of the window, not only the first: a receiver cannot
@@ -548,6 +570,18 @@ class HealthSyncManager(
                 }
                 totalRecordsSent += recordCount
 
+                // Sent, but not the whole window: stop here, the way a failed delivery does, so
+                // the user learns it and a rerun sends the window again (uuids deduplicate).
+                if (isLastChunk && !drained) {
+                    val why = if (healthData.unreadTypes.isNotEmpty()) {
+                        "Health Connect did not return " + healthData.unreadTypes.map { DeletionTracking.payloadKey(it) }.sorted().joinToString()
+                    } else {
+                        "the window holds more than $MAX_PASSES_PER_BACKFILL_WINDOW chunks"
+                    }
+                    return@withContext Result.failure(
+                        Exception("Stopped after $completed of $totalWindows windows: $why; rerun to resume")
+                    )
+                }
                 if (isLastChunk) break
                 cursor = cursor + healthData.watermarks
             }
@@ -594,9 +628,10 @@ class HealthSyncManager(
      * and stores the token each type hands back (issue #61).
      *
      * Tokens are stored whatever the payload does afterwards: a token is a position in a feed
-     * that reading already consumed, so the old one is worth nothing. What the deletions
-     * themselves are worth is decided elsewhere; the caller keeps them in storage until a
-     * payload has taken them, because this read cannot be repeated.
+     * that reading already consumed, so the old one is worth nothing. Each type's deletions go
+     * into storage just before its token does, and the caller keeps them there until a payload
+     * has taken them, because this read cannot be repeated. The caller merges the returned
+     * summary with storage too; the merge drops what is already there.
      */
     private suspend fun readDeletions(enabledTypes: Set<HealthDataType>, ownRecordIds: Set<String>): DeletionSummary {
         val now = System.currentTimeMillis()
@@ -620,15 +655,21 @@ class HealthSyncManager(
                 withTimeoutOrNull(timeoutMs) { healthConnectManager.readDeletions(type, usable, ownRecordIds) }
                     ?: ChangesResult(error = "timed out after $timeoutMs ms")
             }
-            // A type that errored keeps its token: the feed was not consumed, so the next sync
-            // can read the same position again.
-            if (result.nextToken != null) {
-                preferencesManager.setHealthChangesToken(type, result.nextToken, now)
-            }
             // An expired token is reported even when the app decided that itself, as long as
             // there was a token to expire; a first-ever token is not a gap, it is a start.
             val expiredHere = result.expired || (stored != null && usable == null)
             results[type] = result.copy(expired = expiredHere)
+            // A type that errored keeps its token: the feed was not consumed, so the next sync
+            // can read the same position again. A type that moves its token first puts what it
+            // read into storage: the feed behind the old token is gone once the new one is
+            // stored, so a worker stopped at a later type would otherwise lose these deletions
+            // for good, without naming the type in deletions_unavailable either.
+            if (result.nextToken != null) {
+                val part = mapOf(type to results.getValue(type))
+                val found = DeletionSummary(DeletionTracking.merge(part), DeletionTracking.expiredTypes(part))
+                if (!found.isEmpty) preferencesManager.setPendingDeletions(preferencesManager.getPendingDeletions().merge(found))
+                preferencesManager.setHealthChangesToken(type, result.nextToken, now)
+            }
         }
 
         return DeletionSummary(

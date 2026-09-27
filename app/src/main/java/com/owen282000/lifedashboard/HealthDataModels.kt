@@ -82,7 +82,13 @@ data class HealthData(
      * Types whose eligible records exceeded maxRecordsPerSync in this read, meaning a backlog
      * remains beyond the delivered batch. The sync loop keeps draining until this is empty.
      */
-    val cappedTypes: Set<HealthDataType> = emptySet()
+    val cappedTypes: Set<HealthDataType> = emptySet(),
+    /**
+     * Enabled types this read could not read: an error, a Health Connect call that did not
+     * answer in time, or a read step that had used its budget. They keep their watermark and
+     * come back empty, so an empty list here does not mean "nothing new" for them.
+     */
+    val unreadTypes: Set<HealthDataType> = emptySet()
 )
 
 data class BasalMetabolicRateData(

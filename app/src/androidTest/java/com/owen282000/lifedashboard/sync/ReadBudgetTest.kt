@@ -21,6 +21,7 @@ import com.owen282000.lifedashboard.harness.TestSetup
 import com.owen282000.lifedashboard.harness.Witness
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -68,6 +69,7 @@ class ReadBudgetTest {
 
         assertNotNull("the sync came back within 45 s", result)
         assertTrue("two calls of 10 s and some margin, took $took ms", took < 30_000)
+        assertTrue("a Health Connect that answers for no type is a failure, not no data: $result", result!!.exceptionOrNull()?.message.orEmpty().contains("did not answer"))
         assertNull(context.appPreferences().getHealthLastSyncTimestamp(STEPS))
         assertNull(context.appPreferences().getHealthLastSyncTimestamp(WEIGHT))
     }
@@ -92,5 +94,27 @@ class ReadBudgetTest {
         assertTrue("took $took ms", took < 30_000)
         Conservation.assertExactlyOnce(setOf(id), receiver.exchanges.map { Conservation.parse(it.text) })
         assertEquals(1, receiver.exchanges.size)
+    }
+
+    /**
+     * A backfill window whose types could not be read. A receiver treats window_complete as
+     * "drop what this window did not carry", so a window read with a type missing must never
+     * claim it, and the backfill stops so the user can run it again. Red before the fix: the
+     * empty window went out as complete and the backfill reported success.
+     */
+    @Test
+    fun backfillNeverCallsAnUnreadWindowComplete() = runBlocking {
+        TestSetup.health(receiver, setOf(STEPS, WEIGHT))
+        fixture.assertNoForeignRecords(StepsRecord::class, WeightRecord::class)
+        fixture.insert(fixture.steps(10, ago(30), ago(20)), fixture.weight(80.0, ago(20)))
+        val slow = SlowHealthConnectClient(HealthConnectClient.getOrCreate(context))
+        slow.held += HcCall.READ_RECORDS
+
+        val result = withTimeoutOrNull(60_000) { HealthSyncManager(context, HealthConnectManager(context) { slow }).performBackfill(days = 1) }
+
+        assertNotNull("the backfill came back within 60 s", result)
+        assertTrue("the backfill stops: $result", result!!.isFailure)
+        val claims = receiver.exchanges.map { (Conservation.parse(it.text)["window_complete"] as? JsonPrimitive)?.content }
+        assertTrue("no window claimed complete: $claims", claims.none { it == "true" })
     }
 }
