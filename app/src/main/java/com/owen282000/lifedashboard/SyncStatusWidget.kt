@@ -34,9 +34,16 @@ class SyncStatusWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val status = SyncStatusStore.read(context)
+        val labels = WidgetLabels(
+            title = context.getString(R.string.app_name),
+            recordsToday = context.resources.getQuantityString(R.plurals.widget_records_today, status.recordsToday),
+            lastSync = status.lastSyncMillis?.let {
+                context.getString(R.string.widget_synced_at, DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it)))
+            } ?: context.getString(R.string.widget_no_syncs)
+        )
         provideContent {
             GlanceTheme {
-                WidgetContent(status)
+                WidgetContent(status, labels)
             }
         }
     }
@@ -55,8 +62,11 @@ class SyncStatusWidget : GlanceAppWidget() {
     }
 }
 
+/** The widget's text, resolved from resources before composing, in the phone's language. */
+private class WidgetLabels(val title: String, val recordsToday: String, val lastSync: String)
+
 @androidx.compose.runtime.Composable
-private fun WidgetContent(status: SyncStatusStore.Status) {
+private fun WidgetContent(status: SyncStatusStore.Status, labels: WidgetLabels) {
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -75,7 +85,7 @@ private fun WidgetContent(status: SyncStatusStore.Status) {
             ) {}
             Spacer(modifier = GlanceModifier.size(6.dp))
             Text(
-                text = "Life Dashboard",
+                text = labels.title,
                 style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Medium)
             )
         }
@@ -87,16 +97,14 @@ private fun WidgetContent(status: SyncStatusStore.Status) {
             style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold)
         )
         Text(
-            text = "records today",
+            text = labels.recordsToday,
             style = TextStyle(fontSize = 11.sp, color = GlanceTheme.colors.onSurfaceVariant)
         )
 
         Spacer(modifier = GlanceModifier.height(6.dp))
 
         Text(
-            text = status.lastSyncMillis?.let {
-                "Synced " + DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it))
-            } ?: "No syncs yet",
+            text = labels.lastSync,
             style = TextStyle(fontSize = 11.sp, color = GlanceTheme.colors.onSurfaceVariant)
         )
     }

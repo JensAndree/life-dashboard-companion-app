@@ -502,4 +502,11 @@
     <string name="onboarding_scan_desc">Recommended for Home Assistant. Install the Life Dashboard integration from HACS and scan the QR code it shows: the address and the signing secret are filled in for you, and Home Assistant keeps the history in its long-term statistics.</string>
     <string name="onboarding_scan_paired">Code read. The address and the secret are filled in.</string>
     <string name="onboarding_pairing_done">Paired. Tap %1$s under the address to check the connection.</string>
+    <!-- Home screen widget -->
+    <plurals name="widget_records_today">
+        <item quantity="one">record today</item>
+        <item quantity="other">records today</item>
+    </plurals>
+    <string name="widget_synced_at">Synced %1$s</string>
+    <string name="widget_no_syncs">No syncs yet</string>
 </resources>

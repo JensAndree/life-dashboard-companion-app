@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- The home screen widget showed its text in English only. "Records today", the time of the
+  last sync and "No syncs yet" now follow the phone's language (Dutch and German).
+- Two log rows written at the same moment, for example by a Health Connect sync and a Screen
+  Time sync, could lose one of them, and sometimes the stored payload of the other. The
+  Logs tab now keeps every row.
+
 ## [1.21.0] - 2026-09-27
 
 ### Changed

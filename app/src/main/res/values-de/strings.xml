@@ -500,4 +500,11 @@
     <string name="onboarding_scan_desc">Empfohlen für Home Assistant. Installiere die Life-Dashboard-Integration über HACS und scanne den QR-Code, den sie zeigt: Adresse und Signaturgeheimnis werden für dich eingetragen, und Home Assistant bewahrt den Verlauf in seinen Langzeitstatistiken auf.</string>
     <string name="onboarding_scan_paired">Code gelesen. Adresse und Geheimnis sind eingetragen.</string>
     <string name="onboarding_pairing_done">Gekoppelt. Tippe unter der Adresse auf %1$s, um die Verbindung zu prüfen.</string>
+    <!-- Widget auf dem Startbildschirm -->
+    <plurals name="widget_records_today">
+        <item quantity="one">Datensatz heute</item>
+        <item quantity="other">Datensätze heute</item>
+    </plurals>
+    <string name="widget_synced_at">Synchronisiert um %1$s</string>
+    <string name="widget_no_syncs">Noch keine Syncs</string>
 </resources>
