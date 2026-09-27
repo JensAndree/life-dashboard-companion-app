@@ -239,6 +239,8 @@ class ScreenTimeViewModel(
                     onFailure = { UiMessage.SyncFailed(it.message ?: "") }
                 )
                 _state.update { it.copy(syncMessage = message, refreshKey = it.refreshKey + 1) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _state.update { it.copy(syncMessage = UiMessage.SyncFailed(e.message ?: "")) }
             } finally {
@@ -256,6 +258,8 @@ class ScreenTimeViewModel(
                     onSuccess = { data -> _state.update { it.copy(previewData = data) } },
                     onFailure = { _toasts.tryEmit(UiMessage.PreviewFailed(it.message)) }
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _toasts.tryEmit(UiMessage.PreviewFailed(e.message))
             } finally {
@@ -290,6 +294,8 @@ class ScreenTimeViewModel(
                     onSuccess = { data -> _state.update { it.copy(exportJson = data) } },
                     onFailure = { _toasts.tryEmit(UiMessage.ExportFailed(it.message)) }
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _toasts.tryEmit(UiMessage.ExportFailed(e.message))
             } finally {

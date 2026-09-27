@@ -11,9 +11,12 @@
 #
 # What counts as suspend code is decided per line, from the nearest function declared above it:
 # a `suspend fun`, or a coroutine builder (launch, async, withContext, coroutineScope,
-# withTimeout, runBlocking and friends) between that declaration and the catch. A catch is fine
-# when one of the six lines above it catches CancellationException, or when its own line or the
-# next three rethrow (`is CancellationException`, `ensureActive()`, or `throw e` of everything).
+# withTimeout, runBlocking and friends, also called on a scope) between that declaration and the
+# catch; a local fun inside a suspend fun stays in its context. Catching RuntimeException or
+# IllegalStateException counts as catching everything, since CancellationException is one. A
+# catch is fine when an earlier catch of the same try, at most six lines up, catches
+# CancellationException, or when its own line or the next three rethrow (`is
+# CancellationException` with a throw, `ensureActive()`, or `throw e` of everything).
 #
 # That is a heuristic: it can flag a runCatching around code that cannot suspend. Those, and the
 # real ones not fixed yet, are in ALLOWLIST as "file count". The count must match exactly: a new
@@ -39,29 +42,41 @@ LIST=0
 
 scan() {
     awk '
-        function reset_context() { suspend_ctx = 0 }
         {
             lines[NR] = $0
         }
+        # A function declared deeper than the one that set the context is local to it: it
+        # does not end that context (a local helper inside a suspend fun).
         /(^|[^A-Za-z_])fun[ \t]/ {
-            suspend_ctx = ($0 ~ /suspend[ \t]+fun/) ? 1 : 0
+            match($0, /^[ \t]*/); indent = RLENGTH
+            if (!(suspend_ctx && indent > ctx_indent)) {
+                suspend_ctx = ($0 ~ /suspend[ \t]+fun/) ? 1 : 0
+                ctx_indent = indent
+            }
         }
-        /(^|[^A-Za-z_.])(launch|async|withContext|coroutineScope|supervisorScope|withTimeout|withTimeoutOrNull|runBlocking|flow|channelFlow)[ \t]*(\(|\{)/ {
+        # Builders called on a scope count too (viewModelScope.launch {, scope.async {), but
+        # only with a block: launcher.launch(intent) is an ActivityResultLauncher.
+        /(^|[^A-Za-z_.])(launch|async|withContext|coroutineScope|supervisorScope|withTimeout|withTimeoutOrNull|runBlocking|flow|channelFlow)[ \t]*(\(|\{)/ || /\.(launch|async)[ \t]*\{/ {
             suspend_ctx = 1
         }
         {
-            hit = ($0 ~ /catch[ \t]*\([ \t]*[A-Za-z_]+[ \t]*:[ \t]*(java\.lang\.|kotlin\.)?(Exception|Throwable)[ \t]*\)/) || ($0 ~ /runCatching[ \t]*(\{|\()/)
+            # CancellationException is an IllegalStateException, so those two catch it as well.
+            hit = ($0 ~ /catch[ \t]*\([ \t]*[A-Za-z_]+[ \t]*:[ \t]*(java\.lang\.|kotlin\.)?(Exception|Throwable|RuntimeException|IllegalStateException)[ \t]*\)/) || ($0 ~ /runCatching[ \t]*(\{|\()/)
             if (hit && suspend_ctx) {
                 ok = 0
-                for (i = NR - 6; i < NR; i++) if (i > 0 && lines[i] ~ /catch[ \t]*\([^)]*CancellationException/) ok = 1
                 if ($0 ~ /catch[ \t]*\([^)]*CancellationException/) ok = 1
+                # Only a catch of the same try chain counts: look up until the try itself.
+                for (i = NR - 1; i >= NR - 6 && i > 0 && !ok; i--) {
+                    if (lines[i] ~ /catch[ \t]*\([^)]*CancellationException/) ok = 1
+                    else if (lines[i] ~ /(^|[^A-Za-z_])try[ \t]*\{/) break
+                }
                 if (ok == 0) { pending[NR] = $0 }
             }
         }
         END {
             for (n in pending) {
                 rethrows = 0
-                m = n + 0; for (i = m; i <= m + 3 && i <= NR; i++) if (lines[i] ~ /is[ \t]+(kotlinx\.coroutines\.)?CancellationException|ensureActive\(\)|throw[ \t]+[A-Za-z_]+[ \t]*$/) rethrows = 1
+                m = n + 0; for (i = m; i <= m + 3 && i <= NR; i++) if (lines[i] ~ /is[ \t]+(kotlinx\.coroutines\.)?CancellationException.*throw|ensureActive\(\)|throw[ \t]+[A-Za-z_]+[ \t]*$/) rethrows = 1
                 if (!rethrows) printf "%s:%d:%s\n", FILENAME, n, pending[n]
             }
         }

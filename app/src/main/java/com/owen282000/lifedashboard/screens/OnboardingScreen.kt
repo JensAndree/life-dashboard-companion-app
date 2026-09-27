@@ -318,6 +318,8 @@ fun OnboardingScreen(
                                                         recordCount = 0,
                                                         logType = LogType.HEALTH_CONNECT
                                                     ).postData(payload).isSuccess
+                                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                                    throw e
                                                 } catch (e: Exception) {
                                                     false
                                                 }
