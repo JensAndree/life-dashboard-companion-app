@@ -95,14 +95,15 @@ class ConfigBackupManager(private val context: Context) {
             restoreSchedule(LogType.SCREEN_TIME, this)
         }
 
+        val hasSecrets = backup.containsSecrets()
         with(backup.mqtt) {
-            prefs.setSharedMqttBroker(shared.toBroker())
+            prefs.setSharedMqttBroker(shared.toBroker(prefs.getSharedMqttBroker(), hasSecrets))
             prefs.setMqttSection(
                 MqttSection.HEALTH,
                 MqttSectionSettings(
                     enabled = healthEnabled,
                     useSharedBroker = healthUseShared,
-                    ownBroker = healthOwnBroker.toBroker(),
+                    ownBroker = healthOwnBroker.toBroker(prefs.getMqttSection(MqttSection.HEALTH).ownBroker, hasSecrets),
                     baseTopic = healthBaseTopic
                 )
             )
@@ -111,7 +112,7 @@ class ConfigBackupManager(private val context: Context) {
                 MqttSectionSettings(
                     enabled = screenTimeEnabled,
                     useSharedBroker = screenTimeUseShared,
-                    ownBroker = screenTimeOwnBroker.toBroker(),
+                    ownBroker = screenTimeOwnBroker.toBroker(prefs.getMqttSection(MqttSection.SCREEN_TIME).ownBroker, hasSecrets),
                     baseTopic = screenTimeBaseTopic
                 )
             )

@@ -31,6 +31,9 @@ All notable changes to this project are documented in this file. The format is b
   fixed.
 - A webhook that answered HTTP 408 (request timeout) got six requests per sync instead of
   the three the retry rule allows, because the HTTP library repeated each one by itself.
+- Importing a settings file exported without secrets emptied the MQTT broker's username and
+  password, although such an import promises to keep the credentials on the device. They are
+  now kept, for a broker on the same host.
 
 ## [1.20.0] - 2026-09-26
 

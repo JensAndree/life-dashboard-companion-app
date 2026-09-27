@@ -235,4 +235,20 @@ class ConfigBackupTest {
         assertEquals(WriteBackType.BLOOD_PRESSURE, ConfigBackupManager.writeBackTypeFrom("BLOOD_PRESSURE"))
         assertNull(ConfigBackupManager.writeBackTypeFrom("heart_rate"))
     }
+
+    @Test
+    fun secretFreeBrokerKeepsTheCredentialsOfTheSameHostOnly() {
+        val onDevice = MqttBroker("broker.lan", 1883, false, "user", "pass")
+        val fromBackup = BrokerConfig(host = "Broker.lan", port = 8883)
+
+        val kept = fromBackup.toBroker(onDevice, backupHasSecrets = false)
+        assertEquals("user", kept.username)
+        assertEquals("pass", kept.password)
+        assertEquals("the rest comes from the backup", 8883, kept.port)
+
+        // Another broker never gets them, and a backup that carries secrets says what it means.
+        assertNull(BrokerConfig(host = "other.lan").toBroker(onDevice, backupHasSecrets = false).username)
+        assertNull(fromBackup.toBroker(onDevice, backupHasSecrets = true).username)
+        assertEquals("new", fromBackup.copy(username = "new").toBroker(onDevice, backupHasSecrets = true).username)
+    }
 }

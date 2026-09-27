@@ -16,7 +16,6 @@ import com.owen282000.lifedashboard.harness.AppStateRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -93,7 +92,6 @@ class BackupImportTest {
      * to withoutSecrets() and containsSecrets(). Red on main: the broker is written whole, so
      * a secret-free import empties them.
      */
-    @Ignore("F9: fixed in phase 3")
     @Test
     fun secretFreeImportKeepsBrokerCredentials() {
         ConfigBackupManager(context).import(fixture)

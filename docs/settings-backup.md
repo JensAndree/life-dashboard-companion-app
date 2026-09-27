@@ -45,7 +45,7 @@ Permissions are granted by Android, not by the app, so you still grant Health Co
 4. Check the preview, which lists what will be replaced
 5. Confirm
 
-An import replaces your current configuration, so the preview shows the webhook counts, data types and broker count first. A file without secrets keeps the credentials already on the device rather than clearing them, so you can import a shared setup and fill in your own tokens.
+An import replaces your current configuration, so the preview shows the webhook counts, data types and broker count first. A file without secrets keeps the credentials already on the device rather than clearing them, so you can import a shared setup and fill in your own tokens. A broker keeps its username and password only when the file points at the same host; for another broker they are left empty, so they never go to a server they were not set for.
 
 Reopen the app after importing so every screen reads the new values.
 
