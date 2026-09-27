@@ -32,8 +32,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -119,15 +119,14 @@ class CancellationTest {
     }
 
     /**
-     * F4. Heart rate bucketed per minute. A sync sends the closed minute and carries the
-     * current one, still open, and is interrupted while the receiver has not answered. Once
+     * F4. Heart rate bucketed per minute. A sync sends the closed minute and would carry the
+     * current one, still open, but is interrupted while the receiver has not answered. Once
      * that minute is over, the next sync sends it with each of its samples counted once.
      *
-     * Red on main: the carry is stored before the POST and the watermark only after it, so
-     * the interrupted sync leaves the open minute's samples in the carry while the next read
-     * returns them again, and the window goes out with its samples counted twice.
+     * Red before F4 was fixed: the carry was stored before the POST and the watermark only after it, so
+     * the interrupted sync left the open minute's samples in the carry while the next read
+     * returned them again, and the window went out with its samples counted twice.
      */
-    @Ignore("F4: fixed in phase 3")
     @Test
     fun interruptedSyncDoesNotCountBucketedSamplesTwice() = runBlocking {
         TestSetup.health(receiver, setOf(HEART_RATE))
@@ -145,7 +144,10 @@ class CancellationTest {
         receiver.awaitRequests(1)
         job.cancel()
         job.join()
-        assertEquals("the open minute was carried", openMinute.size, prefs.getBucketCarry()[HEART_RATE].orEmpty().size)
+        // An interrupted pass stores neither its carry nor its watermark, so the next sync
+        // reads the open minute again and counts it from the read alone.
+        assertEquals("an interrupted pass stores no carry", 0, prefs.getBucketCarry()[HEART_RATE].orEmpty().size)
+        assertNull("nor a watermark", prefs.getHealthLastSyncTimestamp(HEART_RATE))
 
         receiver.respond(TestSetup.HEALTH_PATH, 200)
         Await.until("the carried minute to be over", 70_000, 500) { Instant.now() > minute.plusSeconds(61) }

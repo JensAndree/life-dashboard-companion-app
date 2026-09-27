@@ -17,6 +17,10 @@ All notable changes to this project are documented in this file. The format is b
   the deletion step did before 1.18.1. Every Health Connect call in the read step now gives up
   after ten seconds and the whole step after two minutes; a type that did not fit keeps its
   place and is read by the next sync, and `_diagnostics` says why in its `error`.
+- A sync interrupted while the webhook had not answered yet could, with a data resolution
+  set, count the samples of a still-open window twice: once from what it had stored and once
+  from the next read. That window is now stored at the same moment as the sync's progress, so
+  an interrupted sync leaves both as they were.
 
 ## [1.20.0] - 2026-09-26
 

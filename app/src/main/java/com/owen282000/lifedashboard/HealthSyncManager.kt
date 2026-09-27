@@ -200,8 +200,10 @@ class HealthSyncManager(
                 val dailyTotals = if (preferencesManager.includeDailyTotals())
                     healthConnectManager.readDailyTotals(days = 2, enabledTypes = enabledTypes) else emptyList()
                 // Bucketed series go out once per sync, in its last pass; earlier passes only
-                // collect. The collection is stored after every pass so an interrupted sync
-                // hands it to the next one instead of losing it.
+                // collect. The collection is stored together with the watermarks, once the pass
+                // is done: the samples it holds were read above the stored watermark, so storing
+                // it any earlier would let an interrupted pass count them twice, once from the
+                // carry and once from the next read (F4 of P2-4).
                 val isLastPass = healthData.cappedTypes.isEmpty() || pass == MAX_SYNC_PASSES
                 val resolved = ResolutionApplier.from(
                     healthData,
@@ -210,7 +212,6 @@ class HealthSyncManager(
                     emit = isLastPass
                 )
                 carried = resolved.carriedOut
-                preferencesManager.setBucketCarry(carried)
 
                 // A collecting pass whose every record went into a bucket has nothing to post.
                 val recordsToSend = totalRecords - resolved.absorbedRecords
@@ -218,6 +219,7 @@ class HealthSyncManager(
                 if (recordsToSend == 0 && bucketsToSend == 0) {
                     val passCounts = mutableMapOf<HealthDataType, Int>()
                     updateSyncTimestamps(healthData, passCounts)
+                    preferencesManager.setBucketCarry(carried)
                     passCounts.forEach { (type, count) -> syncCounts.merge(type, count, Int::plus) }
                     if (isLastPass) break
                     continue
@@ -260,9 +262,11 @@ class HealthSyncManager(
 
                 // Watermarks advance regardless of delivery outcome: a failed payload goes to the
                 // outbox and is guaranteed to be delivered by a later drain, so re-reading (and
-                // potentially double-sending) the same records is unnecessary.
+                // potentially double-sending) the same records is unnecessary. The bucket carry
+                // is stored at the same moment, see above.
                 val passCounts = mutableMapOf<HealthDataType, Int>()
                 updateSyncTimestamps(healthData, passCounts)
+                preferencesManager.setBucketCarry(carried)
                 passCounts.forEach { (type, count) -> syncCounts.merge(type, count, Int::plus) }
 
                 if (postResult.isFailure) {
