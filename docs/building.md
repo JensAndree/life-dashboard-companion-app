@@ -17,8 +17,6 @@ Release signing is described in [KEYSTORE_SETUP.md](KEYSTORE_SETUP.md). Releases
 
 ## Releasing
 
-Before a release that touches the sync path, go through the [release checklist](release-checklist.md): the steps an emulator cannot cover, such as an update over the previous release and one night in the background on a real phone.
-
 1. Add a `## [X.Y.Z]` section to [CHANGELOG.md](../CHANGELOG.md)
 2. Prepare the release files and commit them:
 
