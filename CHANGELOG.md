@@ -10,6 +10,8 @@ All notable changes to this project are documented in this file. The format is b
   as a failed delivery ("Job was cancelled"), and a stopped Screen Time sync did the same. A
   stopped sync now simply stops: no failed row, no step towards the failure notification,
   and what it had not delivered yet is sent by the next run.
+- A stopped sync could keep the worker waiting for up to ten seconds, until the webhook's
+  read timeout, before it let go. The request is now cancelled together with the sync.
 
 ## [1.20.0] - 2026-09-26
 

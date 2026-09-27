@@ -197,6 +197,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.okhttp)
+    implementation(libs.okhttp.coroutines)
     implementation(libs.hivemq.mqtt)
     implementation(libs.kotlinx.serialization.json)
 

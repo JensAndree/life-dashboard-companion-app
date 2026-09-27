@@ -130,10 +130,12 @@ class SchedulerChainTest {
         val stoppedAt = System.currentTimeMillis()
         run.cancel(true)
 
-        // The finally block queues the successor once the sync has unwound; OkHttp's blocking
-        // call only notices at its 10 s read timeout (F1b), so allow for that.
+        // The finally block queues the successor once the sync has unwound. The call to the
+        // receiver is cancelled with the worker (F1b), so that takes no more than a moment; a
+        // blocking call would only notice at its 10 s read timeout.
         val b = Work.awaitEnqueued(Work.HEALTH_SLOT_B, timeoutMs = 15_000)
-        assertTrue("unwound within 15 s", System.currentTimeMillis() - stoppedAt < 15_000)
+        val unwound = System.currentTimeMillis() - stoppedAt
+        assertTrue("unwound within 3 s, took $unwound ms", unwound < 3_000)
         assertEquals(emptyList<WorkInfo>(), Work.enqueued(Work.HEALTH_SLOT_A))
         assertEquals("nothing queued in the outbox", 0, PendingSyncStore.forContext(context).size())
         assertEquals("the watermark did not move", null, prefs.getHealthLastSyncTimestamp(STEPS))

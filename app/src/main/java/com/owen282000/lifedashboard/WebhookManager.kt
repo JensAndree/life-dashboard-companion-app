@@ -8,6 +8,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.coroutines.executeAsync
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -150,7 +151,9 @@ class WebhookManager(
             var errorMessage: String? = null
             for (attempt in 1..MAX_RETRIES) {
                 try {
-                    client.newCall(request).execute().use { response ->
+                    // Suspends rather than blocks: a stopped worker cancels the call itself
+                    // instead of waiting out the read timeout of up to 10 seconds.
+                    client.newCall(request).executeAsync().use { response ->
                         statusCode = response.code
                         if (response.isSuccessful) {
                             // Only the source URL's body is read, and only up to the cap; a

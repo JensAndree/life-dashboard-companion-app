@@ -79,7 +79,10 @@ class CancellationTest {
         job.join()
 
         assertTrue(job.isCancelled)
-        assertTrue("unwound within 15 s", System.currentTimeMillis() - cancelledAt < 15_000)
+        // The call to the receiver is cancelled with the sync (F1b); a blocking call would
+        // only notice at its 10 s read timeout.
+        val unwound = System.currentTimeMillis() - cancelledAt
+        assertTrue("unwound within 3 s, took $unwound ms", unwound < 3_000)
         val failures = prefs.getWebhookLogs(LogType.HEALTH_CONNECT).filter { !it.success }
         assertEquals("no failed delivery logged for a cancellation: ${failures.map { it.errorMessage }}", 0, failures.size)
         assertEquals(0, TestSetup.streak("HEALTH_CONNECT"))
