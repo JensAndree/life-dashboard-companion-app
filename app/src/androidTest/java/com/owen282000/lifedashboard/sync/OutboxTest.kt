@@ -32,7 +32,6 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
@@ -164,7 +163,6 @@ class OutboxTest {
      * 408 once by itself inside every attempt (RetryAndFollowUpInterceptor, which only skips
      * that when retryOnConnectionFailure is off), so the app's count is doubled.
      */
-    @Ignore("F8: fixed in phase 3")
     @Test
     fun requestTimeoutIsTriedThreeTimes() {
         assertEquals(3, attemptsFor(408))

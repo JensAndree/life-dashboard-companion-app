@@ -75,6 +75,12 @@ class WebhookManager(
             .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .writeTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            // The app retries on its own terms (postToUrl), so OkHttp must not add its own
+            // attempts underneath: it repeats a 408 once inside every attempt, which made a
+            // request timeout six requests instead of three (F8 of P2-4). A connection that
+            // fails is still tried on the next address (fast fallback is separate from this),
+            // and one that drops is retried by the app with its backoff.
+            .retryOnConnectionFailure(false)
         val alias = context?.let { PreferencesManager(it).clientCertAlias() }
         if (context != null && alias != null) {
             val setup = ClientCertSupport.sslSetup(context, alias)

@@ -29,6 +29,8 @@ All notable changes to this project are documented in this file. The format is b
   or 422) is now dropped with a log row that says so, and the sync reports it. A wrong key or
   a webhook that is missing (401, 403, 404) still keeps the data queued until the settings are
   fixed.
+- A webhook that answered HTTP 408 (request timeout) got six requests per sync instead of
+  the three the retry rule allows, because the HTTP library repeated each one by itself.
 
 ## [1.20.0] - 2026-09-26
 
