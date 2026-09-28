@@ -497,10 +497,14 @@ data class DailyTotals(
  * Max records delivered per sync for this type, to bound payload size and memory. The batch is
  * capped oldest-first (see [ResilientReadLogic.capOldestFirst]) so later syncs catch up without
  * skipping records.
+ *
+ * Total calories is a minute series like steps: Fitbit writes one record a minute and rewrites a
+ * day of them at a time, about 180 bytes each, so 1000 is about 180 KB. At the old 200 such a
+ * rewrite took every pass of a sync (issue #73).
  */
 val HealthDataType.maxRecordsPerSync: Int
     get() = when (this) {
-        HealthDataType.HEART_RATE, HealthDataType.STEPS -> 1000
+        HealthDataType.HEART_RATE, HealthDataType.STEPS, HealthDataType.TOTAL_CALORIES -> 1000
         HealthDataType.HEART_RATE_VARIABILITY, HealthDataType.RESPIRATORY_RATE,
         HealthDataType.SKIN_TEMPERATURE -> 500
         else -> 200
