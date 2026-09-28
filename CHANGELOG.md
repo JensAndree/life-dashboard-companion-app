@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- A sync could use up Health Connect's read quota, after which it failed to read most data
+  types ([#73](https://github.com/owen282000/life-dashboard-companion-app/issues/73)). Health
+  Connect counts every page the app reads. When a source keeps rewriting records, as Fitbit
+  does with a day of calorie minutes, a sync sent them in up to eight payloads and read every
+  data type again for each one. Now only the types still sending read again, the daily
+  totals are asked for once per sync, records that hold one value each are read in pages of
+  5000 instead of 1000, and total calories go out 1000 at a time instead of 200. A sync that
+  still meets the quota stops reading there, and the next one reads on.
+- A deletion for a data type that was still sending a backlog waited until the backlog was
+  sent, and for a type that never caught up, such as Fitbit's calories, it never went out.
+  It now goes out with the first payload, unless Health Connect still holds the record.
+
 ## [1.21.1] - 2026-09-27
 
 ### Fixed

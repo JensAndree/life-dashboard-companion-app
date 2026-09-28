@@ -7,11 +7,13 @@ import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
 import com.owen282000.lifedashboard.HealthDataType
 import kotlinx.coroutines.runBlocking
@@ -58,6 +60,10 @@ class HcFixture(private val context: Context) {
         samples.map { (time, bpm) -> HeartRateRecord.Sample(time, bpm) },
         meta()
     )
+
+    /** One minute of total calories from [start], the way Fitbit writes them. */
+    fun calorieMinute(start: Instant, kilocalories: Double = 1.2): TotalCaloriesBurnedRecord =
+        TotalCaloriesBurnedRecord(start, offset(start), start.plusSeconds(60), offset(start), Energy.kilocalories(kilocalories), meta())
 
     /** A night from [start] to [end] with the given stages, each as (start, end, stage type). */
     fun sleep(start: Instant, end: Instant, stages: List<Triple<Instant, Instant, Int>>): SleepSessionRecord = SleepSessionRecord(

@@ -81,6 +81,14 @@ object ResilientReadLogic {
      * the rest (Receive, issue #62). What the app wrote came from Home Assistant; sending it
      * back would be an echo. [isOwn] is [isReceiveWrite]: the app's package and a client record id.
      */
+    /**
+     * Whether [error] is Health Connect refusing a call for its quota ("API call quota exceeded").
+     * The client reports it as a RemoteException with no code of its own, so the message is all
+     * there is to go on, the same test Receive uses (WriteBackPayload.failureFor).
+     */
+    fun isQuotaError(error: Throwable): Boolean =
+        error.message?.let { it.contains("quota", ignoreCase = true) || it.contains("rate limit", ignoreCase = true) } == true
+
     fun <T> partitionOwn(records: List<T>, isOwn: (T) -> Boolean): Pair<List<T>, List<T>> =
         records.partition(isOwn)
 

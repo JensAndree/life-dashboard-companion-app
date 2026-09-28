@@ -166,20 +166,31 @@ class HealthSyncManager(
             var pendingDeletions = preferencesManager.getPendingDeletions()
                 .merge(DeletionSummary(expiredTypes = freshDeletions.expiredTypes))
             preferencesManager.setPendingDeletions(pendingDeletions)
-            // Types whose backlog the last pass did not finish: a deletion for one of those waits,
-            // because the record may still come back in a pass that has not been read.
-            var stillCapped = emptySet<String>()
-            // Every record id this sync read, per payload key, also those that went into an open
-            // bucket without a payload: none of them may go out as deleted (issues #71, #72).
+            // The id of every record Health Connect returned this sync, per payload key, before any
+            // filter: those exist, so none of them may go out as deleted (issues #71, #72). A
+            // deletion that is not among them goes out with the first payload, also for a type
+            // still working through a backlog: nothing can bring such a record back.
             val readIds = mutableMapOf<String, Set<String>>()
+            // The types the last pass left capped, which are all a later pass reads: the others
+            // were read in full already, and every page costs a call of Health Connect's read
+            // quota (issue #73). Records written while the sync runs go out with the next one.
+            var draining: Set<HealthDataType>? = null
+            // Health Connect refused a read for its quota: the pass delivers what it read, and
+            // the sync stops reading there (issue #73).
+            var quotaHit = false
+            // Asked for once per sync and put on every payload of it; the totals do not change
+            // between passes a few seconds apart, and each ask costs a call of the quota.
+            var dailyTotalsOnce: List<DailyTotals>? = null
 
             for (pass in 1..MAX_SYNC_PASSES) {
+                if (quotaHit) break
+                val typesToRead = draining ?: enabledTypes
                 // Re-read watermarks each pass; the previous pass advanced them. The range each
                 // type is read over is stored alongside, see LookbackWindow.
                 val lastSyncTimestamps = enabledTypes.associateWith { type -> preferencesManager.getHealthWatermark(type) }
 
                 val healthDataResult = healthConnectManager.readHealthData(
-                    enabledTypes,
+                    typesToRead,
                     lastSyncTimestamps,
                     coveredUntil = enabledTypes.associateWith { preferencesManager.getHealthCoveredUntil(it) }
                 )
@@ -190,8 +201,12 @@ class HealthSyncManager(
                     )
                 }
                 val healthData = healthDataResult.getOrThrow()
-                stillCapped = healthData.cappedTypes.map { DeletionTracking.payloadKey(it) }.toSet()
-                DeletionTracking.recordIds(healthData).forEach { (key, ids) -> readIds[key] = readIds[key].orEmpty() + ids }
+                draining = healthData.cappedTypes
+                if (healthData.quotaExhausted) quotaHit = true
+                healthData.readIds.forEach { (type, ids) ->
+                    val key = DeletionTracking.payloadKey(type)
+                    readIds[key] = readIds[key].orEmpty() + ids
+                }
                 if (isHealthDataEmpty(healthData)) {
                     healthConnectSilent = !anyData && enabledTypes.isNotEmpty() && healthData.unreadTypes.containsAll(enabledTypes)
                     // An empty batch can still carry watermarks: when the only new records were
@@ -224,14 +239,16 @@ class HealthSyncManager(
                 }
 
                 // Build JSON payload, with deduplicated daily totals when enabled
-                val dailyTotals = if (preferencesManager.includeDailyTotals())
-                    healthConnectManager.readDailyTotals(days = 2, enabledTypes = enabledTypes) else emptyList()
+                val dailyTotals = dailyTotalsOnce ?: (
+                    if (preferencesManager.includeDailyTotals() && !quotaHit)
+                        healthConnectManager.readDailyTotals(days = 2, enabledTypes = enabledTypes) else emptyList()
+                    ).also { dailyTotalsOnce = it }
                 // Bucketed series go out once per sync, in its last pass; earlier passes only
                 // collect. The collection is stored together with the watermarks, once the pass
                 // is done: the samples it holds were read above the stored watermark, so storing
                 // it any earlier would let an interrupted pass count them twice, once from the
                 // carry and once from the next read (F4 of P2-4).
-                val isLastPass = healthData.cappedTypes.isEmpty() || pass == MAX_SYNC_PASSES
+                val isLastPass = healthData.cappedTypes.isEmpty() || pass == MAX_SYNC_PASSES || quotaHit
                 val resolved = ResolutionApplier.from(
                     healthData,
                     preferencesManager.getSeriesResolutions(),
@@ -252,11 +269,10 @@ class HealthSyncManager(
                     continue
                 }
 
-                // A deletion of a record this payload carries is dropped: the record was read after
-                // the deletion was, so it exists again under the same id (issues #71, #72). A
-                // deletion for a type still working through a backlog waits for the pass that
-                // finishes it, for the same reason.
-                val (deletionsNow, deletionsLater) = pendingDeletions.split(readIds, stillCapped)
+                // A deletion of a record Health Connect returned this sync is dropped: the record was
+                // read after the deletion was, so it exists again under the same id (issues #71,
+                // #72). The rest goes out now.
+                val deletionsNow = pendingDeletions.without(readIds)
                 val jsonPayload = buildJsonPayload(
                     healthData,
                     dailyTotals = dailyTotals,
@@ -265,10 +281,10 @@ class HealthSyncManager(
                     sequence = preferencesManager.nextHealthSyncSequence()
                 )
                 // Held by this payload now, so a later pass of this same sync must not repeat
-                // them. Storage keeps the rest once the payload is somewhere durable, below:
+                // them. Storage is only cleared once the payload is somewhere durable, below:
                 // a throw from the post would otherwise leave them in neither the webhook, the
                 // outbox, nor the feed they came from, which cannot be read twice.
-                pendingDeletions = deletionsLater
+                pendingDeletions = DeletionSummary.EMPTY
 
                 val sourcePost = writeBack.sourcePost(jsonPayload)
                 val webhookManager = WebhookManager(
@@ -333,15 +349,19 @@ class HealthSyncManager(
             // own, carrying no records. So do records the read could not see (OutsideWindow),
             // which may be all that a watch uploaded after a long time away.
             var deletionsDelivered = false
-            // Deletions for a type whose backlog is still open stay in storage for the next sync.
-            val (deletionsNow, deletionsLater) = pendingDeletions.split(readIds, stillCapped)
+            val deletionsNow = pendingDeletions.without(readIds)
+            if (deletionsNow.isEmpty && !pendingDeletions.isEmpty && webhookUrls.isNotEmpty()) {
+                // Every stored deletion named a record Health Connect still holds: all stale.
+                preferencesManager.setPendingDeletions(DeletionSummary.EMPTY)
+                pendingDeletions = DeletionSummary.EMPTY
+            }
             if (!deletionsNow.isEmpty && webhookUrls.isNotEmpty()) {
                 val deletionPayload = buildJsonPayload(
                     EMPTY_HEALTH_DATA,
                     deletions = deletionsNow,
                     sequence = preferencesManager.nextHealthSyncSequence()
                 )
-                pendingDeletions = deletionsLater
+                pendingDeletions = DeletionSummary.EMPTY
 
                 val sourcePost = writeBack.sourcePost(deletionPayload)
                 val webhookManager = WebhookManager(
@@ -380,7 +400,7 @@ class HealthSyncManager(
                     // already record that the delivery failed.
                 }
                 // Durable either way now: delivered, or on disk in the outbox.
-                preferencesManager.setPendingDeletions(deletionsLater)
+                preferencesManager.setPendingDeletions(DeletionSummary.EMPTY)
                 deletionsDelivered = true
             }
 
@@ -403,6 +423,11 @@ class HealthSyncManager(
             // A sync that only withdrew records did do something, so it must not report "no new
             // data": the user asked for a sync and one went out.
             if (!anyData && !deletionsDelivered) {
+                if (quotaHit) {
+                    // Not an outage: the quota refills within minutes and the next sync reads on
+                    // from the stored watermarks, so it does not count towards the failure streak.
+                    return Result.failure(Exception("Health Connect's read quota is used up for now; the next sync continues where this one stopped"))
+                }
                 if (healthConnectSilent) {
                     // Nothing was read because nothing could be; a run of these is an outage
                     // like an unreachable webhook, and the failure notifier treats it as one.
@@ -420,9 +445,12 @@ class HealthSyncManager(
             // oldest-first cap. Failures never block the webhook sync; the outcome is stored
             // and shown in the MQTT settings section.
             lastDelivered?.let { data ->
-                val totalsForMqtt = if (publishToMqtt) {
+                val totalsForMqtt = if (publishToMqtt && !quotaHit) {
                     try {
-                        healthConnectManager.readDailyTotals(days = 1, enabledTypes = enabledTypes)
+                        // Yesterday and today, from the set this sync already asked for when it has one.
+                        val yesterday = java.time.LocalDate.now().minusDays(1).toString()
+                        dailyTotalsOnce?.takeIf { preferencesManager.includeDailyTotals() }?.filter { it.date >= yesterday }
+                            ?: healthConnectManager.readDailyTotals(days = 1, enabledTypes = enabledTypes)
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -546,9 +574,13 @@ class HealthSyncManager(
                     enabledTypes
                 )
             } else emptyList()
+            // Later chunks read only the types still draining, as a sync's passes do (issue #73);
+            // a type that could not be read in any chunk keeps the window from being complete.
+            var draining: Set<HealthDataType>? = null
+            val windowUnread = mutableSetOf<HealthDataType>()
             for (pass in 1..MAX_PASSES_PER_BACKFILL_WINDOW) {
                 val readResult = healthConnectManager.readHealthData(
-                    enabledTypes,
+                    draining ?: enabledTypes,
                     lastSyncTimestamps = cursor,
                     windowStart = windowStart,
                     windowEnd = windowEnd
@@ -556,6 +588,8 @@ class HealthSyncManager(
                 val healthData = readResult.getOrElse {
                     return@withContext Result.failure(it)
                 }
+                draining = healthData.cappedTypes
+                windowUnread += healthData.unreadTypes
                 // An empty read ends the window. On a later chunk that is ordinary: the previous
                 // chunk drained it and already carried window_complete. On the first chunk it
                 // means the window holds nothing, and that empty snapshot is worth sending,
@@ -574,7 +608,7 @@ class HealthSyncManager(
                 // the read budget) came back empty, which says nothing about what the window
                 // holds for it, so the window cannot be complete either: a receiver would drop
                 // that type's records in the range.
-                val drained = healthData.cappedTypes.isEmpty() && healthData.unreadTypes.isEmpty()
+                val drained = healthData.cappedTypes.isEmpty() && windowUnread.isEmpty()
                 val isLastChunk = healthData.cappedTypes.isEmpty() || pass == MAX_PASSES_PER_BACKFILL_WINDOW
                 val payload = buildJsonPayload(
                     healthData,
@@ -624,8 +658,8 @@ class HealthSyncManager(
                 // Sent, but not the whole window: stop here, the way a failed delivery does, so
                 // the user learns it and a rerun sends the window again (uuids deduplicate).
                 if (isLastChunk && !drained) {
-                    val why = if (healthData.unreadTypes.isNotEmpty()) {
-                        "Health Connect did not return " + healthData.unreadTypes.map { DeletionTracking.payloadKey(it) }.sorted().joinToString()
+                    val why = if (windowUnread.isNotEmpty()) {
+                        "Health Connect did not return " + windowUnread.map { DeletionTracking.payloadKey(it) }.sorted().joinToString()
                     } else {
                         "the window holds more than $MAX_PASSES_PER_BACKFILL_WINDOW chunks"
                     }

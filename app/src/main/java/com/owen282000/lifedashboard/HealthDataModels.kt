@@ -90,6 +90,17 @@ data class HealthData(
      */
     val unreadTypes: Set<HealthDataType> = emptySet(),
     /**
+     * The id of every record each type's read returned, before the watermark or anything else
+     * filtered it: what Health Connect holds in the range read. A deletion of one of these is
+     * stale, the record exists (issues #71, #72).
+     */
+    val readIds: Map<HealthDataType, Set<String>> = emptyMap(),
+    /**
+     * Health Connect refused a read for its quota, and the read stopped there: the types it did
+     * not reach are in [unreadTypes] and keep their watermarks (issue #73).
+     */
+    val quotaExhausted: Boolean = false,
+    /**
      * The lookback anchor to store per type: the moment this read went up to for a type it
      * took completely, the anchor it used for a capped one (see [LookbackWindow.covered]).
      * Stored with the watermarks, the next sync's range reaches back from there. Empty for a

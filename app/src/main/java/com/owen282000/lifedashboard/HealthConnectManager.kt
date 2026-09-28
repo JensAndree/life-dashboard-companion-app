@@ -58,6 +58,15 @@ class HealthConnectManager(
     // Types that came back empty because they could not be read, see HealthData.unreadTypes.
     private val unreadTypes = mutableSetOf<HealthDataType>()
 
+    // The id of every record each type's read returned, before any filter; see HealthData.readIds.
+    private val readIds = mutableMapOf<HealthDataType, Set<String>>()
+
+    // Set when Health Connect refused a read for its quota; see HealthData.quotaExhausted.
+    private var quotaExhausted = false
+
+    // Types whose large page timed out once, read at the default page size since; see readFiltered.
+    private val smallPages by lazy { context.getSharedPreferences("hc_small_pages", Context.MODE_PRIVATE) }
+
     /**
      * Reads all enabled types. The default window per type reaches [LookbackWindow.LOOKBACK]
      * back from [coveredUntil], the last read that took all of it (see [LookbackWindow]);
@@ -76,6 +85,8 @@ class HealthConnectManager(
             watermarks.clear()
             cappedTypes.clear()
             unreadTypes.clear()
+            readIds.clear()
+            quotaExhausted = false
             readStartedAt = System.currentTimeMillis()
             val grantedPermissions = bounded("the granted permissions") { getGrantedPermissions() }
             val endTime = windowEnd ?: Instant.now()
@@ -211,6 +222,8 @@ class HealthConnectManager(
                 watermarks = watermarks.toMap(),
                 cappedTypes = cappedTypes.toSet(),
                 unreadTypes = unreadTypes.toSet(),
+                readIds = readIds.toMap(),
+                quotaExhausted = quotaExhausted,
                 // A backfill reads history and moves nothing of the sync's, this included.
                 coveredUntil = if (windowStart != null) emptyMap() else
                     LookbackWindow.covered(enabledTypes, cappedTypes, unreadTypes, endTime, coveredUntil)
@@ -238,6 +251,14 @@ class HealthConnectManager(
      * watermark, so the next sync reads the same records again: nothing is skipped, only late.
      */
     private suspend fun <T> readType(type: HealthDataType, read: suspend () -> List<T>): List<T> {
+        // Once Health Connect has refused a read for its quota, every further read this sync is
+        // refused too, so none is asked for (issue #73). The quota refills over minutes; the
+        // types left keep their watermarks and are read by the next sync.
+        if (quotaExhausted) {
+            recordDiag(type = type, error = "skipped: Health Connect's read quota is used up")
+            unreadTypes += type
+            return emptyList()
+        }
         if (System.currentTimeMillis() - readStartedAt >= READ_BUDGET_MS) {
             recordDiag(type = type, error = "skipped: the read step used its budget of ${READ_BUDGET_MS / 1000} s")
             unreadTypes += type
@@ -250,6 +271,7 @@ class HealthConnectManager(
         } catch (e: Exception) {
             if (diagnostics[type]?.error == null) recordDiag(type = type, error = e.message ?: e.javaClass.simpleName)
             unreadTypes += type
+            if (ResilientReadLogic.isQuotaError(e)) quotaExhausted = true
             emptyList()
         }
     }
@@ -273,13 +295,14 @@ class HealthConnectManager(
     private suspend fun <T : Record> readAllRecordsResilient(
         recordType: KClass<T>,
         startTime: Instant,
-        endTime: Instant
+        endTime: Instant,
+        pageSize: Int = DEFAULT_PAGE_SIZE
     ): PagedResult<T> {
         return ResilientReadLogic.readResilient(
             startTime = startTime,
             endTime = endTime,
             idOf = { record: T -> record.metadata.id }
-        ) { windowStart, windowEnd -> readAllRecords(recordType, windowStart, windowEnd) }
+        ) { windowStart, windowEnd -> readAllRecords(recordType, windowStart, windowEnd, pageSize) }
     }
 
     /**
@@ -293,7 +316,8 @@ class HealthConnectManager(
     private suspend fun <T : Record> readAllRecords(
         recordType: KClass<T>,
         startTime: Instant,
-        endTime: Instant
+        endTime: Instant,
+        pageSize: Int = DEFAULT_PAGE_SIZE
     ): PagedResult<T> {
         val records = mutableListOf<T>()
         var pageToken: String? = null
@@ -302,6 +326,7 @@ class HealthConnectManager(
             val request = ReadRecordsRequest(
                 recordType = recordType,
                 timeRangeFilter = TimeRangeFilter.between(startTime, endTime),
+                pageSize = pageSize,
                 pageToken = pageToken
             )
             val response = bounded("a page of ${recordType.simpleName}") { healthConnectClient.readRecords(request) }
@@ -334,7 +359,20 @@ class HealthConnectManager(
         timeOf: (T) -> Instant
     ): List<T> {
         try {
-            val paged = readAllRecordsResilient(recordType, startTime, endTime)
+            // Every page costs one call of Health Connect's read quota, whatever its size, so
+            // records that hold a single value are read in pages of LARGE_PAGE_SIZE: a week of
+            // Fitbit calorie minutes in 3 calls instead of 11 (issue #73). A type whose large page
+            // did not come back in time is read at the default size from the next sync on, so a
+            // slow phone does not lose it for good; asking again at once would double the wait
+            // when Health Connect does not answer at all.
+            val largePages = !smallPages.getBoolean(type.name, false)
+            val paged = try {
+                readAllRecordsResilient(recordType, startTime, endTime, if (largePages) LARGE_PAGE_SIZE else DEFAULT_PAGE_SIZE)
+            } catch (e: HealthConnectTimeoutException) {
+                if (largePages) smallPages.edit().putBoolean(type.name, true).apply()
+                throw e
+            }
+            readIds[type] = paged.records.map { it.metadata.id }.toSet()
             val fresh = paged.records.filter {
                 lastSync == null || lastSync.admits(it.metadata.lastModifiedTime, it.metadata.id)
             }
@@ -538,6 +576,7 @@ class HealthConnectManager(
     private suspend fun readHeartRateData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<HeartRateData> {
         try {
             val paged = readAllRecordsResilient(HeartRateRecord::class, startTime, endTime)
+            readIds[HealthDataType.HEART_RATE] = paged.records.map { it.metadata.id }.toSet()
             val rawSamples = paged.records.sumOf { it.samples.size }
             // Sample-carrying records are filtered and capped at RECORD granularity on their
             // modification time and id: a record is either fully delivered or fully deferred,
@@ -1033,6 +1072,7 @@ class HealthConnectManager(
     private suspend fun readSkinTemperatureData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<SkinTemperatureData> {
         try {
             val paged = readAllRecordsResilient(SkinTemperatureRecord::class, startTime, endTime)
+            readIds[HealthDataType.SKIN_TEMPERATURE] = paged.records.map { it.metadata.id }.toSet()
             val rawSamples = paged.records.sumOf { it.deltas.size }
             val (own, newRecords) = ownRecordsPartition(
                 paged.records.filter { lastSync == null || lastSync.admits(it.metadata.lastModifiedTime, it.metadata.id) }
@@ -1147,6 +1187,12 @@ class HealthConnectManager(
     companion object {
         /** How long one Health Connect call may take before the read gives it up; see [bounded]. */
         const val CALL_TIMEOUT_MS = 10_000L
+
+        /** Health Connect's own page size, kept for records that carry many samples each. */
+        const val DEFAULT_PAGE_SIZE = 1000
+
+        /** The largest page Health Connect serves, for records that hold one value each. */
+        const val LARGE_PAGE_SIZE = 5000
 
         /**
          * The whole read step of one pass. Generous, a backstop rather than a ration: types

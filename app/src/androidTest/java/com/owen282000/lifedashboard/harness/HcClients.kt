@@ -28,21 +28,35 @@ enum class HcCall { READ_RECORDS, AGGREGATE, AGGREGATE_GROUPED, GET_CHANGES_TOKE
 /**
  * Every Health Connect call the suite makes, the app's and the harness's own, per kind.
  *
- * Health Connect limits calls per app and per day (5000 reads in 24 hours in the foreground on
- * the API 36 image), and the tests share that budget with each other. [AppStateRule] logs the
+ * Health Connect limits read calls per app: by default 2000 per 15 minutes and 16000 per 24 hours
+ * in the foreground, half that in the background, where every readRecords page, aggregate call,
+ * getChanges page and getChangesToken costs one (RateLimiter in the platform module; the numbers
+ * are flags a device can change). The tests share that budget with each other. [AppStateRule] logs the
  * count after every test, so a test that starts reading far more than it should shows up in
  * the log long before the suite runs into the limit.
  */
 object HcCalls {
     private val counts = ConcurrentHashMap<HcCall, AtomicInteger>()
+    private val readsByType = ConcurrentHashMap<String, AtomicInteger>()
 
     fun record(call: HcCall) {
         counts.getOrPut(call) { AtomicInteger() }.incrementAndGet()
     }
 
+    /** One readRecords page of [recordType], so a test can see which types a sync read and how often. */
+    fun recordRead(recordType: String) {
+        readsByType.getOrPut(recordType) { AtomicInteger() }.incrementAndGet()
+    }
+
+    /** readRecords pages per record type (the class's simple name) since the last [reset]. */
+    fun readsByType(): Map<String, Int> = readsByType.mapValues { it.value.get() }
+
     fun snapshot(): Map<HcCall, Int> = counts.mapValues { it.value.get() }.filterValues { it > 0 }
 
-    fun reset() = counts.clear()
+    fun reset() {
+        counts.clear()
+        readsByType.clear()
+    }
 
     fun total(): Int = counts.values.sumOf { it.get() }
 }
@@ -61,6 +75,7 @@ open class CountingHealthConnectClient(private val real: HealthConnectClient) : 
         }
 
     override suspend fun <T : Record> readRecords(request: ReadRecordsRequest<T>): ReadRecordsResponse<T> {
+        HcCalls.recordRead(request.recordType.simpleName.orEmpty())
         before(HcCall.READ_RECORDS)
         return real.readRecords(request)
     }

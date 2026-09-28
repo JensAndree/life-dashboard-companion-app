@@ -305,28 +305,22 @@ class DeletionTrackingTest {
     }
 
     @Test
-    fun aPayloadNeverCarriesARecordAndItsDeletion() {
+    fun aDeletionOfARecordHealthConnectReturnedIsStale() {
         val pending = DeletionSummary(
-            deleted = listOf(deletion("heart_rate", "hr-1"), deletion("sleep", "night"), deletion("sleep", "gone"), deletion("steps", "old")),
+            deleted = listOf(deletion("total_calories", "minute-1"), deletion("total_calories", "minute-2"), deletion("sleep", "night")),
             expiredTypes = listOf("weight")
         )
-        val (now, later) = pending.split(mapOf("sleep" to setOf("night")), holdTypes = setOf("heart_rate"))
-        assertEquals(listOf(deletion("sleep", "gone"), deletion("steps", "old")), now.deleted)
+        // What the sync's reads returned: minute-1 exists again, the others are gone.
+        val now = pending.without(mapOf("total_calories" to setOf("minute-1", "minute-3")))
+        assertEquals(listOf(deletion("total_calories", "minute-2"), deletion("sleep", "night")), now.deleted)
         assertEquals(listOf("weight"), now.expiredTypes)
-        assertEquals("a type still reading its backlog waits", listOf(deletion("heart_rate", "hr-1")), later.deleted)
-        assertTrue(later.expiredTypes.isEmpty())
     }
 
     @Test
-    fun recordIdsNameTheRecordNotTheSample() {
-        val data = HealthData(
-            heartRate = listOf(
-                HeartRateData(60, java.time.Instant.EPOCH, uuid = "hr-1#1000"),
-                HeartRateData(61, java.time.Instant.EPOCH, uuid = "hr-1#2000")
-            ),
-            sleep = listOf(SleepData(java.time.Instant.EPOCH, java.time.Duration.ZERO, emptyList(), uuid = "night"))
-        )
-        assertEquals(mapOf("heart_rate" to setOf("hr-1"), "sleep" to setOf("night")), DeletionTracking.recordIds(data))
-        assertFalse(DeletionTracking.recordIds(HealthData()).isNotEmpty())
+    fun aQuotaRefusalIsToldApartFromOtherFailures() {
+        assertTrue(ResilientReadLogic.isQuotaError(Exception("API call quota exceeded, availableQuota: 0.17 requested: 1")))
+        assertTrue(ResilientReadLogic.isQuotaError(IllegalStateException("Rate limit exceeded")))
+        assertFalse(ResilientReadLogic.isQuotaError(java.io.IOException("Health Connect did not return a page of StepsRecord within 10 s")))
+        assertFalse(ResilientReadLogic.isQuotaError(SecurityException("Caller doesn't have android.permission.health.READ_STEPS")))
     }
 }

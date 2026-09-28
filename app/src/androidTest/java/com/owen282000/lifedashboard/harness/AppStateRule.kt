@@ -49,7 +49,7 @@ class AppStateRule : TestRule {
 
     companion object {
         private const val TAG = "LdSuite"
-        private val PREFS = listOf("life_dashboard_prefs", "life_dashboard_logs", "life_dashboard_writeback")
+        private val PREFS = listOf("life_dashboard_prefs", "life_dashboard_logs", "life_dashboard_writeback", "hc_small_pages")
         private val FILE_DIRS = listOf("pending_sync", "webhook_payloads")
 
         @Volatile
