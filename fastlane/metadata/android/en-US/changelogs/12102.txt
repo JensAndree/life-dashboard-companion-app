@@ -1,0 +1,7 @@
+Fixed:
+
+- A sync could use up Health Connect's read quota, after which it failed to read most data
+  types. Health Connect counts every page the app reads. When a source keeps rewriting
+  records, as Fitbit does with a day of calorie minutes, a sync sent them in up to eight
+  payloads and read every data type again for each one. Now only the types still sending read
+... full changelog: https://github.com/owen282000/life-dashboard-companion-app/blob/main/CHANGELOG.md
