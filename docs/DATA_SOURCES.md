@@ -90,9 +90,17 @@ A receiver that stores both steps records and adds them reports 7500 steps for a
 
 **Session association.** For the observed UREVO data, the Exercise record is a useful session anchor. Matching Distance, Steps and Total Calories records shared that producer and the exact start and end times. `daily_totals` are Health Connect's whole-day aggregates across sources and activities; they are not measurements of one exercise session.
 
+### Gadgetbridge (`nodomain.freeyourgadget.gadgetbridge`)
+
+Gadgetbridge writes steps, distance and calories as one record per minute, with a client record id made from the minute's end time, and each export writes the last hour again, so that late watch data lands in the right minute. With a Huawei watch, the way Gadgetbridge lays the watch's samples out per minute puts the last minute of data in an export one minute late. The next export writes that minute again in its right place, and also writes the minute after it with its real value, which replaces the misplaced copy. When that next minute has no steps, Gadgetbridge writes nothing for it, and the misplaced copy stays: Health Connect then holds the same count twice, in two adjacent minutes, under different ids.
+
+The author of HC Webhook [PR #87](https://github.com/mcnaveen/health-connect-webhook/pull/87#issuecomment-5848753981) saw this with a Huawei Watch GT 3 Pro in September 2026, and Gadgetbridge's code explains it: the one-hour rewrite exists since 0.92.0, and the misplaced minute is still there in 0.94.0. It adds at most one minute per export, and only when you were idle in the minute after the export's last activity, as you usually are while the watch syncs. Distance and calories go through the same code.
+
+The copy covers a different minute, so it looks like real activity to everything downstream. Deduplicating on `uuid`, or on source, type, interval and value as for UREVO above, keeps it, and so does `daily_totals`: Health Connect only merges records that overlap. The Health Connect app and Home Assistant's step sensors and history show the same extra minute. The fix belongs in Gadgetbridge.
+
 ### Several sources for the same activity
 
-Phone, watch app, Samsung Health or a mirroring app can each write their own copy of the same steps, distance or calories. Adding up the raw records then counts the same activity two or three times. The `daily_totals` array, on by default, uses Health Connect's aggregate API, which deduplicates across sources, and matches what the Health Connect app shows. Use it for day totals and keep the raw records for detail. A single source can also write two records for the same interval (see [UREVO](#urevo-comurevoapp) above); `daily_totals` still does not turn those into a per-session figure.
+Phone, watch app, Samsung Health or a mirroring app can each write their own copy of the same steps, distance or calories. Adding up the raw records then counts the same activity two or three times. The `daily_totals` array, on by default, uses Health Connect's aggregate API, which deduplicates across sources, and matches what the Health Connect app shows. Use it for day totals and keep the raw records for detail. A single source can also write two records for the same interval (see [UREVO](#urevo-comurevoapp) above). `daily_totals` counts such an overlap once, from the record written last, but it stays a day's figure, not a per-session one. Records that do not overlap all count, including a copy that a source put in the wrong minute (see [Gadgetbridge](#gadgetbridge-nodomainfreeyourgadgetgadgetbridge) above).
 
 ## Screen time (UsageStatsManager)
 

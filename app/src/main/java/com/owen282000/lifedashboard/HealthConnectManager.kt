@@ -456,9 +456,10 @@ class HealthConnectManager(
         ResilientReadLogic.watermarkAfter(delivered, own, capped, timeOf = { it.metadata.lastModifiedTime }, idOf = { it.metadata.id })
 
     /**
-     * Deduplicated per-day totals for the last [days] full days plus today, computed with the
-     * aggregate API: Health Connect merges overlapping records from multiple sources (phone
-     * plus watch), so these totals never double count the way raw record sums can. Only
+     * Per-day totals for the last [days] full days plus today, computed with the aggregate API:
+     * Health Connect merges overlapping records, from several sources (phone plus watch) or from
+     * one, so the same minute is not counted twice the way raw record sums can. Records that do
+     * not overlap all count, also a source's misplaced copy of a minute (see DailyTotals). Only
      * metrics whose type is enabled are requested, to stay within granted permissions.
      */
     suspend fun readDailyTotals(days: Int, enabledTypes: Set<HealthDataType>): List<DailyTotals> {

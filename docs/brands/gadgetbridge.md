@@ -29,6 +29,8 @@ From Gadgetbridge's list of what it writes to Health Connect, these are the type
 
 What your watch actually records depends on the model and on what Gadgetbridge supports for it.
 
+With a Huawei watch, Gadgetbridge can leave one minute's steps, distance and calories twice in Health Connect after a sync, the copy one minute after the real minute. Day totals, in Home Assistant and in the Health Connect app alike, then include that minute twice. It is a small error, at most a minute per sync; [DATA_SOURCES.md](../DATA_SOURCES.md#gadgetbridge-nodomainfreeyourgadgetgadgetbridge) explains where it comes from.
+
 In Home Assistant, day totals and the latest reading become sensors, and every day goes into long-term statistics on its own date. Sending Gadgetbridge's history on the first sync, and running the app's backfill after it, gives you that history in Home Assistant too.
 
 ## When it arrives

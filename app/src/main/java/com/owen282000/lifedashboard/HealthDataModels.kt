@@ -493,8 +493,10 @@ data class HrvData(
 )
 
 /**
- * One day of deduplicated totals from Health Connect's aggregate API, which merges
- * overlapping records from multiple sources (phone plus watch) instead of double counting.
+ * One day of totals from Health Connect's aggregate API, which counts every stretch of time once:
+ * overlapping records, from several sources (phone plus watch) or from one, are merged by the
+ * priority list and, within one app, the record written last. Records that do not overlap all
+ * count, so a copy a source misplaces into the next minute is counted too (DailyTotalsOverlapTest).
  */
 data class DailyTotals(
     val date: String,
