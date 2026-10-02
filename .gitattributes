@@ -1,11 +1,14 @@
 # Normalise text on commit, so a contributor on Windows does not turn a whole file into a diff.
 * text=auto eol=lf
 
-# gradlew is executed by a shell and must keep LF whatever the checkout platform does;
-# gradlew.bat is a batch file and must keep CRLF.
+# gradlew is executed by a shell and must keep LF whatever the checkout platform does.
 gradlew        text eol=lf
 *.sh           text eol=lf
-gradlew.bat    text eol=crlf
+
+# gradlew.bat is a batch file and keeps CRLF. It is stored as written, without conversion:
+# Gradle's wrapper task and Dependabot's wrapper bumps commit it with CRLF, and with
+# "text eol=crlf" every such bump left the file looking modified on a fresh checkout (#78).
+gradlew.bat    -text
 
 # Binaries: never touched, never diffed as text.
 *.png          binary
