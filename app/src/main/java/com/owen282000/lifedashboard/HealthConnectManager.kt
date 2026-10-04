@@ -64,6 +64,12 @@ class HealthConnectManager(
     // Set when Health Connect refused a read for its quota; see HealthData.quotaExhausted.
     private var quotaExhausted = false
 
+    // What the current read was asked to keep whole windows of, and what it kept; see
+    // WholeWindowRequest and HealthData.whole.
+    private var wholeRequests: Map<HealthDataType, WholeWindowRequest> = emptyMap()
+    private val wholeRecords = mutableMapOf<HealthDataType, List<Record>>()
+    private val wholeCoverage = mutableMapOf<HealthDataType, ReadCoverage>()
+
     // Types whose large page timed out once, read at the default page size since; see readFiltered.
     private val smallPages by lazy { context.getSharedPreferences("hc_small_pages", Context.MODE_PRIVATE) }
 
@@ -78,7 +84,14 @@ class HealthConnectManager(
         lastSyncTimestamps: Map<HealthDataType, Watermark?>,
         windowStart: Instant? = null,
         windowEnd: Instant? = null,
-        coveredUntil: Map<HealthDataType, Instant?> = emptyMap()
+        coveredUntil: Map<HealthDataType, Instant?> = emptyMap(),
+        wholeWindows: Map<HealthDataType, WholeWindowRequest> = emptyMap(),
+        /**
+         * A range of its own for some types, overriding [windowStart] and [windowEnd]: a
+         * backfill reads a bucketed type from bucket bound to bucket bound, so no window is
+         * split between two of its chunks of days (P2-16).
+         */
+        windowFor: Map<HealthDataType, Pair<Instant, Instant>> = emptyMap()
     ): Result<HealthData> {
         return try {
             diagnostics.clear()
@@ -87,25 +100,29 @@ class HealthConnectManager(
             unreadTypes.clear()
             readIds.clear()
             quotaExhausted = false
+            wholeRequests = wholeWindows
+            wholeRecords.clear()
+            wholeCoverage.clear()
             readStartedAt = System.currentTimeMillis()
             val grantedPermissions = bounded("the granted permissions") { getGrantedPermissions() }
             val endTime = windowEnd ?: Instant.now()
             val windows = if (windowStart != null) emptyMap() else
                 enabledTypes.associateWith { LookbackWindow.of(endTime, coveredUntil[it]) }
-            fun startOf(type: HealthDataType): Instant = windowStart ?: windows.getValue(type).start
+            fun startOf(type: HealthDataType): Instant = windowFor[type]?.first ?: windowStart ?: windows.getValue(type).start
+            fun endOf(type: HealthDataType): Instant = windowFor[type]?.second ?: endTime
 
             val stepsData = if (HealthDataType.STEPS in enabledTypes)
-                readType(HealthDataType.STEPS) { readStepsData(startOf(HealthDataType.STEPS), endTime, lastSyncTimestamps[HealthDataType.STEPS]) } else emptyList()
+                readType(HealthDataType.STEPS) { readStepsData(startOf(HealthDataType.STEPS), endOf(HealthDataType.STEPS), lastSyncTimestamps[HealthDataType.STEPS]) } else emptyList()
             val sleepData = if (HealthDataType.SLEEP in enabledTypes)
                 readType(HealthDataType.SLEEP) { readSleepData(startOf(HealthDataType.SLEEP), endTime, lastSyncTimestamps[HealthDataType.SLEEP]) } else emptyList()
             val heartRateData = if (HealthDataType.HEART_RATE in enabledTypes)
-                readType(HealthDataType.HEART_RATE) { readHeartRateData(startOf(HealthDataType.HEART_RATE), endTime, lastSyncTimestamps[HealthDataType.HEART_RATE]) } else emptyList()
+                readType(HealthDataType.HEART_RATE) { readHeartRateData(startOf(HealthDataType.HEART_RATE), endOf(HealthDataType.HEART_RATE), lastSyncTimestamps[HealthDataType.HEART_RATE]) } else emptyList()
             val distanceData = if (HealthDataType.DISTANCE in enabledTypes)
-                readType(HealthDataType.DISTANCE) { readDistanceData(startOf(HealthDataType.DISTANCE), endTime, lastSyncTimestamps[HealthDataType.DISTANCE]) } else emptyList()
+                readType(HealthDataType.DISTANCE) { readDistanceData(startOf(HealthDataType.DISTANCE), endOf(HealthDataType.DISTANCE), lastSyncTimestamps[HealthDataType.DISTANCE]) } else emptyList()
             val activeCaloriesData = if (HealthDataType.ACTIVE_CALORIES in enabledTypes)
-                readType(HealthDataType.ACTIVE_CALORIES) { readActiveCaloriesData(startOf(HealthDataType.ACTIVE_CALORIES), endTime, lastSyncTimestamps[HealthDataType.ACTIVE_CALORIES]) } else emptyList()
+                readType(HealthDataType.ACTIVE_CALORIES) { readActiveCaloriesData(startOf(HealthDataType.ACTIVE_CALORIES), endOf(HealthDataType.ACTIVE_CALORIES), lastSyncTimestamps[HealthDataType.ACTIVE_CALORIES]) } else emptyList()
             val totalCaloriesData = if (HealthDataType.TOTAL_CALORIES in enabledTypes)
-                readType(HealthDataType.TOTAL_CALORIES) { readTotalCaloriesData(startOf(HealthDataType.TOTAL_CALORIES), endTime, lastSyncTimestamps[HealthDataType.TOTAL_CALORIES]) } else emptyList()
+                readType(HealthDataType.TOTAL_CALORIES) { readTotalCaloriesData(startOf(HealthDataType.TOTAL_CALORIES), endOf(HealthDataType.TOTAL_CALORIES), lastSyncTimestamps[HealthDataType.TOTAL_CALORIES]) } else emptyList()
             val weightData = if (HealthDataType.WEIGHT in enabledTypes)
                 readType(HealthDataType.WEIGHT) { readWeightData(startOf(HealthDataType.WEIGHT), endTime, lastSyncTimestamps[HealthDataType.WEIGHT]) } else emptyList()
             val heightData = if (HealthDataType.HEIGHT in enabledTypes)
@@ -115,11 +132,11 @@ class HealthConnectManager(
             val bloodGlucoseData = if (HealthDataType.BLOOD_GLUCOSE in enabledTypes)
                 readType(HealthDataType.BLOOD_GLUCOSE) { readBloodGlucoseData(startOf(HealthDataType.BLOOD_GLUCOSE), endTime, lastSyncTimestamps[HealthDataType.BLOOD_GLUCOSE]) } else emptyList()
             val oxygenSaturationData = if (HealthDataType.OXYGEN_SATURATION in enabledTypes)
-                readType(HealthDataType.OXYGEN_SATURATION) { readOxygenSaturationData(startOf(HealthDataType.OXYGEN_SATURATION), endTime, lastSyncTimestamps[HealthDataType.OXYGEN_SATURATION]) } else emptyList()
+                readType(HealthDataType.OXYGEN_SATURATION) { readOxygenSaturationData(startOf(HealthDataType.OXYGEN_SATURATION), endOf(HealthDataType.OXYGEN_SATURATION), lastSyncTimestamps[HealthDataType.OXYGEN_SATURATION]) } else emptyList()
             val bodyTemperatureData = if (HealthDataType.BODY_TEMPERATURE in enabledTypes)
                 readType(HealthDataType.BODY_TEMPERATURE) { readBodyTemperatureData(startOf(HealthDataType.BODY_TEMPERATURE), endTime, lastSyncTimestamps[HealthDataType.BODY_TEMPERATURE]) } else emptyList()
             val respiratoryRateData = if (HealthDataType.RESPIRATORY_RATE in enabledTypes)
-                readType(HealthDataType.RESPIRATORY_RATE) { readRespiratoryRateData(startOf(HealthDataType.RESPIRATORY_RATE), endTime, lastSyncTimestamps[HealthDataType.RESPIRATORY_RATE]) } else emptyList()
+                readType(HealthDataType.RESPIRATORY_RATE) { readRespiratoryRateData(startOf(HealthDataType.RESPIRATORY_RATE), endOf(HealthDataType.RESPIRATORY_RATE), lastSyncTimestamps[HealthDataType.RESPIRATORY_RATE]) } else emptyList()
             val restingHeartRateData = if (HealthDataType.RESTING_HEART_RATE in enabledTypes)
                 readType(HealthDataType.RESTING_HEART_RATE) { readRestingHeartRateData(startOf(HealthDataType.RESTING_HEART_RATE), endTime, lastSyncTimestamps[HealthDataType.RESTING_HEART_RATE]) } else emptyList()
             val exerciseData = if (HealthDataType.EXERCISE in enabledTypes)
@@ -139,7 +156,7 @@ class HealthConnectManager(
             val bodyWaterMassData = if (HealthDataType.BODY_WATER_MASS in enabledTypes)
                 readType(HealthDataType.BODY_WATER_MASS) { readBodyWaterMassData(startOf(HealthDataType.BODY_WATER_MASS), endTime, lastSyncTimestamps[HealthDataType.BODY_WATER_MASS]) } else emptyList()
             val hrvData = if (HealthDataType.HEART_RATE_VARIABILITY in enabledTypes)
-                readType(HealthDataType.HEART_RATE_VARIABILITY) { readHrvData(startOf(HealthDataType.HEART_RATE_VARIABILITY), endTime, lastSyncTimestamps[HealthDataType.HEART_RATE_VARIABILITY]) } else emptyList()
+                readType(HealthDataType.HEART_RATE_VARIABILITY) { readHrvData(startOf(HealthDataType.HEART_RATE_VARIABILITY), endOf(HealthDataType.HEART_RATE_VARIABILITY), lastSyncTimestamps[HealthDataType.HEART_RATE_VARIABILITY]) } else emptyList()
             val menstruationPeriodData = if (HealthDataType.MENSTRUATION_PERIOD in enabledTypes)
                 readType(HealthDataType.MENSTRUATION_PERIOD) { readMenstruationPeriodData(startOf(HealthDataType.MENSTRUATION_PERIOD), endTime, lastSyncTimestamps[HealthDataType.MENSTRUATION_PERIOD]) } else emptyList()
             val menstruationFlowData = if (HealthDataType.MENSTRUATION_FLOW in enabledTypes)
@@ -149,7 +166,7 @@ class HealthConnectManager(
             val vo2MaxData = if (HealthDataType.VO2_MAX in enabledTypes)
                 readType(HealthDataType.VO2_MAX) { readVo2MaxData(startOf(HealthDataType.VO2_MAX), endTime, lastSyncTimestamps[HealthDataType.VO2_MAX]) } else emptyList()
             val skinTemperatureData = if (HealthDataType.SKIN_TEMPERATURE in enabledTypes)
-                readType(HealthDataType.SKIN_TEMPERATURE) { readSkinTemperatureData(startOf(HealthDataType.SKIN_TEMPERATURE), endTime, lastSyncTimestamps[HealthDataType.SKIN_TEMPERATURE]) } else emptyList()
+                readType(HealthDataType.SKIN_TEMPERATURE) { readSkinTemperatureData(startOf(HealthDataType.SKIN_TEMPERATURE), endOf(HealthDataType.SKIN_TEMPERATURE), lastSyncTimestamps[HealthDataType.SKIN_TEMPERATURE]) } else emptyList()
             val basalBodyTemperatureData = if (HealthDataType.BASAL_BODY_TEMPERATURE in enabledTypes)
                 readType(HealthDataType.BASAL_BODY_TEMPERATURE) { readBasalBodyTemperatureData(startOf(HealthDataType.BASAL_BODY_TEMPERATURE), endTime, lastSyncTimestamps[HealthDataType.BASAL_BODY_TEMPERATURE]) } else emptyList()
             val intermenstrualBleedingData = if (HealthDataType.INTERMENSTRUAL_BLEEDING in enabledTypes)
@@ -226,7 +243,9 @@ class HealthConnectManager(
                 quotaExhausted = quotaExhausted,
                 // A backfill reads history and moves nothing of the sync's, this included.
                 coveredUntil = if (windowStart != null) emptyMap() else
-                    LookbackWindow.covered(enabledTypes, cappedTypes, unreadTypes, endTime, coveredUntil)
+                    LookbackWindow.covered(enabledTypes, cappedTypes, unreadTypes, endTime, coveredUntil),
+                whole = wholeData(),
+                wholeCoverage = wholeCoverage.toMap()
             ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -356,6 +375,11 @@ class HealthConnectManager(
         startTime: Instant,
         endTime: Instant,
         lastSync: Watermark?,
+        /**
+         * The moment a bucket counts the record in, its start for an interval as SeriesBucketing
+         * does; only for the types a read can keep whole windows of (see [keepWhole]).
+         */
+        bucketTimeOf: ((T) -> Instant)? = null,
         timeOf: (T) -> Instant
     ): List<T> {
         try {
@@ -379,6 +403,7 @@ class HealthConnectManager(
             // What this app wrote itself (Receive) came from Home Assistant and does not go
             // back to it; see ownRecordsPartition for the watermark rule.
             val (own, filtered) = ownRecordsPartition(fresh)
+            if (bucketTimeOf != null) keepWhole(type, paged, filtered, startTime, endTime, bucketTimeOf)
             val limited = ResilientReadLogic.capOldestFirst(
                 filtered,
                 type.maxRecordsPerSync,
@@ -445,6 +470,54 @@ class HealthConnectManager(
      * always sets it identifies what Receive wrote (see [ResilientReadLogic.isReceiveWrite]).
      * There is no setting, because nobody wants their own measurements returned to them.
      */
+    /**
+     * Keeps the records of [type] that the read was asked to keep whole windows of (see
+     * [WholeWindowRequest]), from the window of the earliest [changed] record or the request's
+     * keepFrom onwards; [bucketTimeOf] is the moment a bucket counts a record in. A read that
+     * skipped part of its range keeps nothing: it cannot say what a window holds.
+     */
+    private fun <T : Record> keepWhole(
+        type: HealthDataType,
+        paged: PagedResult<T>,
+        changed: List<T>,
+        startTime: Instant,
+        endTime: Instant,
+        bucketTimeOf: (T) -> Instant
+    ) {
+        val request = wholeRequests[type] ?: return
+        if (paged.skippedWindows > 0) return
+        val earliest = (changed.map(bucketTimeOf) + listOfNotNull(request.keepFrom)).minOrNull() ?: return
+        val from = maxOf(SeriesBucketing.alignDown(earliest, request.resolution), startTime)
+        wholeRecords[type] = ownRecordsPartition(paged.records).second.filter { !bucketTimeOf(it).isBefore(from) }
+        wholeCoverage[type] = ReadCoverage(from, endTime)
+    }
+
+    /** What [keepWhole] kept, mapped the way the delivered records are; null when nothing was. */
+    private fun wholeData(): HealthData? {
+        if (wholeRecords.isEmpty()) return null
+        // [at] is the moment a bucket counts the item in; items before the kept range belong to
+        // a window the read cannot build whole and are left out.
+        fun <R : Record, D> of(type: HealthDataType, at: (D) -> Instant, map: (R) -> List<D>): List<D> {
+            val from = wholeCoverage[type]?.from ?: return emptyList()
+            @Suppress("UNCHECKED_CAST")
+            return (wholeRecords[type] as List<R>?).orEmpty().flatMap(map).filter { !at(it).isBefore(from) }
+        }
+        return HealthData(
+            steps = of(HealthDataType.STEPS, StepsData::startTime) { r: StepsRecord ->
+                listOf(StepsData(r.count, r.startTime, r.endTime, r.metadata.dataOrigin.packageName))
+            },
+            distance = of(HealthDataType.DISTANCE, DistanceData::startTime) { r: DistanceRecord ->
+                listOf(DistanceData(r.distance.inMeters, r.startTime, r.endTime, r.metadata.dataOrigin.packageName))
+            },
+            activeCalories = of(HealthDataType.ACTIVE_CALORIES, ActiveCaloriesData::startTime) { r: ActiveCaloriesBurnedRecord ->
+                listOf(ActiveCaloriesData(r.energy.inKilocalories, r.startTime, r.endTime, r.metadata.dataOrigin.packageName))
+            },
+            totalCalories = of(HealthDataType.TOTAL_CALORIES, TotalCaloriesData::startTime) { r: TotalCaloriesBurnedRecord ->
+                listOf(TotalCaloriesData(r.energy.inKilocalories, r.startTime, r.endTime, r.metadata.dataOrigin.packageName))
+            }
+        )
+    }
+
     private fun <T : Record> ownRecordsPartition(records: List<T>): Pair<List<T>, List<T>> {
         val own = context.packageName
         return ResilientReadLogic.partitionOwn(records) {
@@ -536,7 +609,7 @@ class HealthConnectManager(
         endTime: Instant,
         lastSync: Watermark?
     ): List<StepsData> {
-        return readFiltered(HealthDataType.STEPS, StepsRecord::class, startTime, endTime, lastSync) { it.endTime }
+        return readFiltered(HealthDataType.STEPS, StepsRecord::class, startTime, endTime, lastSync, { it.startTime }) { it.endTime }
             .map { record ->
                 StepsData(
                     count = record.count,
@@ -626,17 +699,17 @@ class HealthConnectManager(
     }
 
     private suspend fun readDistanceData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<DistanceData> {
-        return readFiltered(HealthDataType.DISTANCE, DistanceRecord::class, startTime, endTime, lastSync) { it.endTime }
+        return readFiltered(HealthDataType.DISTANCE, DistanceRecord::class, startTime, endTime, lastSync, { it.startTime }) { it.endTime }
             .map { DistanceData(it.distance.inMeters, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
     private suspend fun readActiveCaloriesData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<ActiveCaloriesData> {
-        return readFiltered(HealthDataType.ACTIVE_CALORIES, ActiveCaloriesBurnedRecord::class, startTime, endTime, lastSync) { it.endTime }
+        return readFiltered(HealthDataType.ACTIVE_CALORIES, ActiveCaloriesBurnedRecord::class, startTime, endTime, lastSync, { it.startTime }) { it.endTime }
             .map { ActiveCaloriesData(it.energy.inKilocalories, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
     private suspend fun readTotalCaloriesData(startTime: Instant, endTime: Instant, lastSync: Watermark?): List<TotalCaloriesData> {
-        return readFiltered(HealthDataType.TOTAL_CALORIES, TotalCaloriesBurnedRecord::class, startTime, endTime, lastSync) { it.endTime }
+        return readFiltered(HealthDataType.TOTAL_CALORIES, TotalCaloriesBurnedRecord::class, startTime, endTime, lastSync, { it.startTime }) { it.endTime }
             .map { TotalCaloriesData(it.energy.inKilocalories, it.startTime, it.endTime, it.metadata.dataOrigin.packageName, it.metadata.id) }
     }
 
