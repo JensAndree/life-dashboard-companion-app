@@ -34,6 +34,7 @@ data class ScreenTimeUiState(
     val failureNotificationsEnabled: Boolean = false,
     val failureThreshold: Int = 3,
     val secretsUnavailable: Boolean = false,
+    val secretsNeedReentry: Boolean = false,
     val mqttLastStatus: String? = null,
     val isSyncing: Boolean = false,
     val isPreviewing: Boolean = false,
@@ -72,6 +73,9 @@ interface ScreenTimeActions {
 
     /** Loads what the app filter's picker offers, once; the list is built from usage statistics. */
     fun loadAppChoices()
+
+    /** See HealthActions.dismissSecretsLost. */
+    fun dismissSecretsLost()
     fun save()
 
     /** See HealthActions.reloadFromSettings: for changes made outside this screen. */
@@ -101,6 +105,7 @@ class ScreenTimeViewModel(
                 failureNotificationsEnabled = settings.failureNotificationsEnabled(),
                 failureThreshold = settings.failureThreshold(),
                 secretsUnavailable = settings.secretsUnavailable,
+                secretsNeedReentry = settings.secretsNeedReentry,
                 mqttLastStatus = settings.lastMqttStatus(MqttSection.SCREEN_TIME)
             )
         }
@@ -138,13 +143,21 @@ class ScreenTimeViewModel(
         if (granted != _state.value.hasUsageAccess) _state.update { it.copy(hasUsageAccess = granted) }
     }
 
+    override fun dismissSecretsLost() {
+        settings.dismissSecretsReentry()
+        _state.update { it.copy(secretsNeedReentry = settings.secretsNeedReentry) }
+    }
+
     /** See HealthConnectViewModel.refreshSharedSettings: the two settings both tabs show. */
     fun refreshSharedSettings() {
         _state.update {
             it.copy(
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
                 clientCertAlias = settings.clientCertAlias(),
-                phoneName = settings.phoneName()
+                phoneName = settings.phoneName(),
+                // A secret saved on the other tab may have ended the request to enter them again.
+                secretsUnavailable = settings.secretsUnavailable,
+                secretsNeedReentry = settings.secretsNeedReentry
             )
         }
     }
@@ -222,7 +235,7 @@ class ScreenTimeViewModel(
             dayBoundaryHour = hour.toString(),
             mqtt = draft.mqtt.withPort()
         )
-        _state.update { it.copy(saved = saved, draft = saved) }
+        _state.update { it.copy(saved = saved, draft = saved, secretsNeedReentry = settings.secretsNeedReentry) }
         return UiMessage.Saved
     }
 

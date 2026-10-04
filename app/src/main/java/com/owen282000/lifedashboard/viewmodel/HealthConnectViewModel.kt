@@ -54,6 +54,7 @@ data class HealthUiState(
     val failureNotificationsEnabled: Boolean = false,
     val failureThreshold: Int = 3,
     val secretsUnavailable: Boolean = false,
+    val secretsNeedReentry: Boolean = false,
     val mqttLastStatus: String? = null,
     val isSyncing: Boolean = false,
     val isPreviewing: Boolean = false,
@@ -123,6 +124,9 @@ interface HealthActions {
     fun setPhoneName(name: String)
     fun setFailureNotifications(enabled: Boolean)
     fun setFailureThreshold(threshold: Int)
+
+    /** The banner about lost secrets was dismissed. */
+    fun dismissSecretsLost()
     fun save()
 
     /**
@@ -183,6 +187,7 @@ class HealthConnectViewModel(
                 failureNotificationsEnabled = settings.failureNotificationsEnabled(),
                 failureThreshold = settings.failureThreshold(),
                 secretsUnavailable = settings.secretsUnavailable,
+                secretsNeedReentry = settings.secretsNeedReentry,
                 mqttLastStatus = settings.lastMqttStatus(MqttSection.HEALTH),
                 receive = settings.receiveSettings(),
                 receiveStatus = settings.receiveStatus()
@@ -225,12 +230,20 @@ class HealthConnectViewModel(
      * certificate), which that tab may have changed. The draft is left alone, so an
      * unsaved edit here survives a look at the other tab.
      */
+    override fun dismissSecretsLost() {
+        settings.dismissSecretsReentry()
+        _state.update { it.copy(secretsNeedReentry = settings.secretsNeedReentry) }
+    }
+
     fun refreshSharedSettings() {
         _state.update {
             it.copy(
                 allowHttpWebhooks = settings.allowHttpWebhooks(),
                 clientCertAlias = settings.clientCertAlias(),
-                phoneName = settings.phoneName()
+                phoneName = settings.phoneName(),
+                // A secret saved on the other tab may have ended the request to enter them again.
+                secretsUnavailable = settings.secretsUnavailable,
+                secretsNeedReentry = settings.secretsNeedReentry
             )
         }
     }
@@ -365,7 +378,7 @@ class HealthConnectViewModel(
             schedule = draft.schedule.copy(intervalText = interval.toString()),
             mqtt = draft.mqtt.withPort()
         )
-        _state.update { it.copy(saved = saved, draft = saved) }
+        _state.update { it.copy(saved = saved, draft = saved, secretsNeedReentry = settings.secretsNeedReentry) }
         return UiMessage.Saved
     }
 
